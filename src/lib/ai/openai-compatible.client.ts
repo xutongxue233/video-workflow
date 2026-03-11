@@ -56,6 +56,43 @@ function shouldFallbackToResponses(input: { status: number; errorText: string })
   );
 }
 
+function shouldRetryResponsesWithListInput(input: { status: number; errorText: string }): boolean {
+  const lowered = input.errorText.toLowerCase();
+
+  return input.status === 400 && lowered.includes("input must be a list");
+}
+
+function buildResponsesBody(input: {
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  format: "string" | "list";
+}) {
+  if (input.format === "list") {
+    return {
+      model: input.model,
+      input: [
+        {
+          role: "system",
+          content: [{ type: "input_text", text: input.systemPrompt }],
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: input.userPrompt }],
+        },
+      ],
+      temperature: 0.4,
+    };
+  }
+
+  return {
+    model: input.model,
+    instructions: input.systemPrompt,
+    input: input.userPrompt,
+    temperature: 0.4,
+  };
+}
+
 function readResponsesOutput(json: unknown): string {
   const parsed = responsesApiResponseSchema.parse(json);
 
@@ -110,16 +147,54 @@ export function createOpenAICompatibleClient(config: {
           const responsesResponse = await fetch(`${normalizedBaseURL}/responses`, {
             method: "POST",
             headers: commonHeaders,
-            body: JSON.stringify({
-              model: input.model,
-              instructions: input.systemPrompt,
-              input: input.userPrompt,
-              temperature: 0.4,
-            }),
+            body: JSON.stringify(
+              buildResponsesBody({
+                model: input.model,
+                systemPrompt: input.systemPrompt,
+                userPrompt: input.userPrompt,
+                format: "string",
+              }),
+            ),
           });
 
           if (!responsesResponse.ok) {
             const responsesErrorText = await responsesResponse.text();
+
+            if (
+              shouldRetryResponsesWithListInput({
+                status: responsesResponse.status,
+                errorText: responsesErrorText,
+              })
+            ) {
+              const listInputResponse = await fetch(`${normalizedBaseURL}/responses`, {
+                method: "POST",
+                headers: commonHeaders,
+                body: JSON.stringify(
+                  buildResponsesBody({
+                    model: input.model,
+                    systemPrompt: input.systemPrompt,
+                    userPrompt: input.userPrompt,
+                    format: "list",
+                  }),
+                ),
+              });
+
+              if (!listInputResponse.ok) {
+                const listInputErrorText = await listInputResponse.text();
+                throw new Error(
+                  `OpenAI-compatible request failed: ${listInputResponse.status} ${listInputErrorText}`,
+                );
+              }
+
+              const listRawText = await listInputResponse.text();
+              const listJson = parseJsonOrThrow({
+                rawText: listRawText,
+                context: "OpenAI-compatible responses endpoint",
+              });
+
+              return readResponsesOutput(listJson);
+            }
+
             throw new Error(
               `OpenAI-compatible request failed: ${responsesResponse.status} ${responsesErrorText}`,
             );
