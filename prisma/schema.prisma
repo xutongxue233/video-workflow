@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum AssetType {
+  IMAGE
+}
+
+enum RenderJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  memberships  TeamMember[]
+}
+
+model Team {
+  id         String       @id @default(cuid())
+  name       String
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  members    TeamMember[]
+  projects   Project[]
+}
+
+model TeamMember {
+  id         String    @id @default(cuid())
+  teamId     String
+  userId     String
+  createdAt  DateTime  @default(now())
+  team       Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model Project {
+  id          String       @id @default(cuid())
+  teamId      String
+  name        String
+  description String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  assets      Asset[]
+  scripts     Script[]
+  renderJobs  RenderJob[]
+  videos      Video[]
+}
+
+model Asset {
+  id         String    @id @default(cuid())
+  projectId  String
+  type       AssetType @default(IMAGE)
+  storageKey String
+  url        String
+  fileName   String?
+  createdAt  DateTime  @default(now())
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Script {
+  id             String    @id @default(cuid())
+  projectId      String
+  title          String?
+  hook           String?
+  sellingPoints  String?
+  storyboard     String?
+  structuredJson String?
+  generatorModel String?
+  cta            String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  renderJobs     RenderJob[]
+}
+
+model RenderJob {
+  id              String          @id @default(cuid())
+  projectId       String
+  scriptId        String?
+  templateId      String
+  voiceStyle      String
+  aspectRatio     String
+  provider        String?
+  externalJobId   String?
+  externalStatus  String?
+  attemptCount    Int             @default(0)
+  idempotencyKey  String          @unique
+  status          RenderJobStatus @default(QUEUED)
+  errorMessage    String?
+  queuedAt        DateTime        @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  script          Script?         @relation(fields: [scriptId], references: [id], onDelete: SetNull)
+  video           Video?
+}
+
+model Video {
+  id               String     @id @default(cuid())
+  projectId        String
+  renderJobId      String?    @unique
+  storageKey       String
+  url              String
+  durationSeconds  Int?
+  width            Int?
+  height           Int?
+  createdAt        DateTime   @default(now())
+  project          Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  renderJob        RenderJob? @relation(fields: [renderJobId], references: [id], onDelete: SetNull)
+}
