@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import { prisma as defaultPrisma } from "../db/prisma";
+import { ensureWorkflowProjectExists } from "../projects/workflow-project";
 
 type ScriptRecord = {
   id: string;
@@ -81,6 +82,8 @@ export function createPrismaScriptRepository(
 ): ScriptRepository {
   return {
     async createScript(input) {
+      await ensureWorkflowProjectExists(prisma, input.projectId);
+
       return prisma.script.create({
         data: {
           projectId: input.projectId,

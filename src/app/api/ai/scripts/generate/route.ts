@@ -38,6 +38,7 @@ const modelInputValidationMarkers = [
   "response did not include candidate text",
   "Model response must be valid JSON",
   "Model response failed schema validation",
+  "Foreign key constraint violated",
 ];
 
 function mapKnownError(error: Error): { message: string; status: number } | null {

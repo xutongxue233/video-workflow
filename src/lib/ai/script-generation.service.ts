@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import { prisma as defaultPrisma } from "../db/prisma";
+import { ensureWorkflowProjectExists } from "../projects/workflow-project";
 import type { OpenAICompatibleChatClient } from "./openai-compatible.client";
 
 const generationInputSchema = z.object({
@@ -137,6 +138,8 @@ export function createPrismaScriptGenerationRepository(
 ): ScriptGenerationRepository {
   return {
     async createGeneratedScript(input) {
+      await ensureWorkflowProjectExists(prisma, input.projectId);
+
       const script = await prisma.script.create({
         data: {
           projectId: input.projectId,

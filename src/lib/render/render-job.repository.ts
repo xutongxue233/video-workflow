@@ -1,6 +1,7 @@
 import { type PrismaClient, RenderJobStatus } from "@prisma/client";
 
 import { prisma as defaultPrisma } from "../db/prisma";
+import { ensureWorkflowProjectExists } from "../projects/workflow-project";
 
 import type {
   CreateQueuedJobInput,
@@ -45,6 +46,8 @@ export function createPrismaRenderJobRepository(
 ): RenderJobRepository {
   return {
     async createQueuedJob(input: CreateQueuedJobInput): Promise<RenderJobRecord> {
+      await ensureWorkflowProjectExists(prisma, input.projectId);
+
       const record = await prisma.renderJob.create({
         data: {
           projectId: input.projectId,
@@ -158,6 +161,8 @@ export function createPrismaRenderJobRepository(
       height?: number;
       durationSeconds?: number;
     }): Promise<void> {
+      await ensureWorkflowProjectExists(prisma, input.projectId);
+
       await prisma.video.create({
         data: {
           projectId: input.projectId,

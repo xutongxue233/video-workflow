@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createScriptGenerationService } from "./script-generation.service";
+import {
+  createPrismaScriptGenerationRepository,
+  createScriptGenerationService,
+} from "./script-generation.service";
 
 describe("script generation service", () => {
   it("generates structured script json and stores it", async () => {
@@ -150,5 +153,50 @@ describe("script generation service", () => {
     };
 
     expect(promptPayload.language).toBe("en-US");
+  });
+
+  it("ensures project exists before inserting generated script", async () => {
+    const teamUpsert = vi.fn().mockResolvedValue({ id: "team_video_workflow_default" });
+    const projectUpsert = vi.fn().mockResolvedValue({ id: "proj_demo" });
+    const scriptCreate = vi.fn().mockResolvedValue({
+      id: "scr_1",
+      projectId: "proj_demo",
+      title: "t",
+      hook: "h",
+      sellingPoints: "s",
+      storyboard: "sb",
+      structuredJson: "{}",
+      generatorModel: "m",
+      cta: "c",
+    });
+
+    const repository = createPrismaScriptGenerationRepository({
+      team: { upsert: teamUpsert },
+      project: { upsert: projectUpsert },
+      script: { create: scriptCreate },
+    } as never);
+
+    await repository.createGeneratedScript({
+      projectId: "proj_demo",
+      title: "t",
+      hook: "h",
+      sellingPoints: "s",
+      storyboard: "sb",
+      structuredJson: "{}",
+      generatorModel: "m",
+      cta: "c",
+    });
+
+    expect(teamUpsert).toHaveBeenCalledOnce();
+    expect(projectUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "proj_demo" },
+      }),
+    );
+    expect(scriptCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ projectId: "proj_demo" }),
+      }),
+    );
   });
 });

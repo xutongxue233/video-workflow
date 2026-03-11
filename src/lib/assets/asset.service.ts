@@ -1,6 +1,7 @@
 import { AssetType, type PrismaClient } from "@prisma/client";
 
 import { prisma as defaultPrisma } from "../db/prisma";
+import { ensureWorkflowProjectExists } from "../projects/workflow-project";
 
 import type { LocalStorage } from "../storage/local-storage";
 
@@ -62,6 +63,8 @@ export function createPrismaAssetRepository(
 ): AssetRepository {
   return {
     async createAsset(input) {
+      await ensureWorkflowProjectExists(prisma, input.projectId);
+
       const record = await prisma.asset.create({
         data: {
           projectId: input.projectId,
