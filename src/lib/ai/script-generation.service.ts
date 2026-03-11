@@ -14,6 +14,17 @@ const generationInputSchema = z.object({
   tone: z.string().min(1),
   durationSec: z.number().int().positive().max(180),
   contentLanguage: z.enum(["zh-CN", "en-US"]).default("zh-CN"),
+  referenceAssets: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        projectId: z.string().min(1),
+        fileName: z.string().min(1),
+        url: z.string().min(1),
+      }),
+    )
+    .max(8)
+    .default([]),
 });
 
 const generatedScriptSchema = z.object({
@@ -53,6 +64,8 @@ function buildSystemPrompt(): string {
   return [
     "You are a short-video copywriting and storyboard planner for 3D printing models.",
     "Return strictly valid JSON only.",
+    "All user-facing text fields must be in the requested language.",
+    "Use provided reference assets as visual guidance when available.",
     "Output shape: {title,hook,voiceover,cta,shots:[{index,durationSec,visual,caption,camera}]}",
     "No markdown. No code fences. No additional keys.",
   ].join(" ");
@@ -68,6 +81,12 @@ function buildUserPrompt(input: z.infer<typeof generationInputSchema>): string {
       tone: input.tone,
       durationSec: input.durationSec,
       language: input.contentLanguage,
+      referenceAssets: input.referenceAssets.map((asset) => ({
+        id: asset.id,
+        projectId: asset.projectId,
+        fileName: asset.fileName,
+        url: asset.url,
+      })),
     },
     null,
     2,

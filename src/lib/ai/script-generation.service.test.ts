@@ -155,6 +155,70 @@ describe("script generation service", () => {
     expect(promptPayload.language).toBe("en-US");
   });
 
+  it("includes reference assets in generation prompt payload", async () => {
+    const completionClient = {
+      createJsonCompletion: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          title: "Dragon Mini Promo",
+          hook: "Print stunning dragons in one night.",
+          voiceover: "Meet the miniature dragon everyone wants on their table.",
+          cta: "Download and print now.",
+          shots: [
+            {
+              index: 1,
+              durationSec: 6,
+              visual: "Reveal finished dragon model on rotating stand",
+              caption: "Ultra detail, tabletop ready",
+              camera: "slow orbit",
+            },
+          ],
+        }),
+      ),
+    };
+
+    const service = createScriptGenerationService({
+      completionClient,
+      repository: {
+        createGeneratedScript: vi.fn().mockResolvedValue({
+          id: "scr_1",
+        }),
+      },
+      model: "gpt-script-v1",
+    });
+
+    await service.generateAndSave({
+      projectId: "proj_1",
+      productName: "Dragon Mini",
+      sellingPoints: ["high detail", "support-friendly"],
+      targetAudience: "tabletop gamers",
+      tone: "energetic",
+      durationSec: 30,
+      contentLanguage: "zh-CN",
+      referenceAssets: [
+        {
+          id: "ast_1",
+          projectId: "proj_legacy",
+          fileName: "dragon_reference.png",
+          url: "/files/assets/dragon_reference.png",
+        },
+      ],
+    });
+
+    const call = completionClient.createJsonCompletion.mock.calls[0]?.[0];
+    const promptPayload = JSON.parse(call?.userPrompt ?? "{}") as {
+      referenceAssets?: Array<{ id: string; projectId: string; fileName: string; url: string }>;
+    };
+
+    expect(promptPayload.referenceAssets).toEqual([
+      {
+        id: "ast_1",
+        projectId: "proj_legacy",
+        fileName: "dragon_reference.png",
+        url: "/files/assets/dragon_reference.png",
+      },
+    ]);
+  });
+
   it("ensures project exists before inserting generated script", async () => {
     const teamUpsert = vi.fn().mockResolvedValue({ id: "team_video_workflow_default" });
     const projectUpsert = vi.fn().mockResolvedValue({ id: "proj_demo" });

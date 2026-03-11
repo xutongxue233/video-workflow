@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createSeaDanceVideoService } from "./seadance-video.service";
+import {
+  createOpenAICompatibleSeaDanceClient,
+  createSeaDanceVideoService,
+} from "./seadance-video.service";
 
 describe("seadance video service", () => {
   it("creates and polls external job until success", async () => {
@@ -85,5 +88,90 @@ describe("seadance video service", () => {
         imageUrls: [],
       }),
     ).rejects.toThrow("timed out");
+  });
+});
+
+describe("openai-compatible seadance client", () => {
+  it("creates job with volc content list payload", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "cgt_123",
+      }),
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createOpenAICompatibleSeaDanceClient({
+      baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "test-key",
+    });
+
+    const created = await client.createVideoJob({
+      model: "doubao-seedance-1-0-pro-250528",
+      prompt: "cinematic product shot",
+      aspectRatio: "16:9",
+      imageUrls: [],
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      model: string;
+      content: Array<{ type: string; text?: string }>;
+      ratio: string;
+    };
+
+    expect(requestBody.model).toBe("doubao-seedance-1-0-pro-250528");
+    expect(requestBody.ratio).toBe("16:9");
+    expect(requestBody.content).toEqual([
+      {
+        type: "text",
+        text: "cinematic product shot",
+      },
+    ]);
+    expect(created).toEqual({
+      externalJobId: "cgt_123",
+      status: "queued",
+    });
+  });
+
+  it("polls volc task api and returns content.video_url", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "cgt_123",
+        status: "succeeded",
+        content: {
+          video_url: "https://cdn.example.com/video.mp4",
+        },
+      }),
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createOpenAICompatibleSeaDanceClient({
+      baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "test-key",
+    });
+
+    const polled = await client.getVideoJob("cgt_123");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/cgt_123",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(polled).toEqual({
+      status: "succeeded",
+      videoUrl: "https://cdn.example.com/video.mp4",
+      errorMessage: undefined,
+    });
   });
 });

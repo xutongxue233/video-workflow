@@ -25,6 +25,17 @@ const requestSchema = z
     tone: z.string().min(1),
     durationSec: z.number().int().positive().max(180),
     contentLanguage: z.enum(["zh-CN", "en-US"]).optional(),
+    referenceAssets: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          projectId: z.string().min(1),
+          fileName: z.string().min(1),
+          url: z.string().min(1),
+        }),
+      )
+      .max(8)
+      .optional(),
     modelProvider: runtimeTextModelSchema.optional(),
   });
 
@@ -106,6 +117,7 @@ export async function POST(request: Request) {
       tone: body.tone,
       durationSec: body.durationSec,
       contentLanguage: body.contentLanguage,
+      referenceAssets: body.referenceAssets ?? [],
     });
 
     return NextResponse.json(generated, { status: 201 });

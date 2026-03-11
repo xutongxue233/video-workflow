@@ -13,6 +13,38 @@ const assetService = createAssetService({
   repository: createPrismaAssetRepository(prisma),
 });
 
+function parseLimit(raw: string | null, fallback = 60): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.min(200, Math.floor(parsed)));
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const projectId = url.searchParams.get("projectId")?.trim();
+  const limit = parseLimit(url.searchParams.get("limit"), 60);
+
+  const items = await prisma.asset.findMany({
+    where: projectId ? { projectId } : undefined,
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      projectId: true,
+      type: true,
+      fileName: true,
+      storageKey: true,
+      url: true,
+      createdAt: true,
+    },
+  });
+
+  return NextResponse.json({ items }, { status: 200 });
+}
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();

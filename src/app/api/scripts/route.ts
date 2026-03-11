@@ -8,6 +8,41 @@ const scriptService = createScriptService({
   repository: createPrismaScriptRepository(prisma),
 });
 
+function parseLimit(raw: string | null, fallback = 40): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.min(200, Math.floor(parsed)));
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const projectId = url.searchParams.get("projectId")?.trim();
+  const limit = parseLimit(url.searchParams.get("limit"), 40);
+
+  const items = await prisma.script.findMany({
+    where: projectId ? { projectId } : undefined,
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      projectId: true,
+      title: true,
+      hook: true,
+      sellingPoints: true,
+      storyboard: true,
+      cta: true,
+      generatorModel: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return NextResponse.json({ items }, { status: 200 });
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
