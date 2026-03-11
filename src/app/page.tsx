@@ -127,6 +127,10 @@ type Dict = {
     submitting: string;
     needScriptId: string;
     hint: string;
+    jobId: string;
+    status: string;
+    polling: string;
+    ready: string;
   };
 };
 
@@ -230,6 +234,10 @@ const TEXT: Record<Locale, Dict> = {
       submitting: "入队中...",
       needScriptId: "缺少 Script ID，无法生成视频。",
       hint: "需要先在步骤 2 获取有效的 Script ID。",
+      jobId: "任务 ID",
+      status: "任务状态",
+      polling: "正在查询任务状态...",
+      ready: "视频已生成",
     },
   },
   "en-US": {
@@ -328,6 +336,10 @@ const TEXT: Record<Locale, Dict> = {
       submitting: "Queueing...",
       needScriptId: "scriptId is required to generate video.",
       hint: "A valid Script ID from step 2 is required.",
+      jobId: "Render Job ID",
+      status: "Render Status",
+      polling: "Polling render status...",
+      ready: "Video is ready",
     },
   },
 };
@@ -451,6 +463,8 @@ export default function Home() {
 
   const [renderState, setRenderState] = useState<RequestState>({ loading: false, result: "" });
   const [renderJobId, setRenderJobId] = useState("");
+  const [renderJobStatus, setRenderJobStatus] = useState("");
+  const [renderVideoUrl, setRenderVideoUrl] = useState("");
   const [renderAspectRatio, setRenderAspectRatio] = useState<"9:16" | "16:9">("9:16");
   const [storedModelProviders, setStoredModelProviders] = useState<StoredModelProvider[]>(() =>
     getSsrSafeInitialModelProviders(),
@@ -477,6 +491,77 @@ export default function Home() {
       window.removeEventListener("storage", reloadProviders);
     };
   }, []);
+
+  useEffect(() => {
+    if (!renderJobId.trim()) {
+      return;
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const terminalStatus = new Set(["SUCCEEDED", "FAILED", "CANCELED"]);
+
+    const scheduleNextPoll = () => {
+      if (cancelled) {
+        return;
+      }
+      timer = setTimeout(() => {
+        void pollStatus();
+      }, 2500);
+    };
+
+    const pollStatus = async () => {
+      if (cancelled) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/render-jobs/${encodeURIComponent(renderJobId)}`);
+        const data = toJsonRecord(await readJsonResponse(response));
+
+        if (!response.ok) {
+          setRenderState({
+            loading: false,
+            result: `Request failed ${response.status}\n${formatJson(data)}`,
+          });
+          setRenderJobStatus("FAILED");
+          return;
+        }
+
+        const status = typeof data.status === "string" ? data.status : "";
+        const videoUrl = typeof data.videoUrl === "string" ? data.videoUrl : "";
+
+        setRenderJobStatus(status);
+        setRenderState({ loading: false, result: formatJson(data) });
+
+        if (videoUrl) {
+          setRenderVideoUrl(videoUrl);
+        }
+
+        if (terminalStatus.has(status)) {
+          return;
+        }
+
+        scheduleNextPoll();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "failed to poll render job status";
+        setRenderState({
+          loading: false,
+          result: `Request failed 500\n${message}`,
+        });
+        scheduleNextPoll();
+      }
+    };
+
+    void pollStatus();
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [renderJobId]);
 
   const dict = TEXT[locale];
 
@@ -552,6 +637,8 @@ export default function Home() {
     () => availableVideoProviders.find((provider) => provider.id === resolvedVideoProviderId) ?? null,
     [availableVideoProviders, resolvedVideoProviderId],
   );
+  const isRenderPolling = Boolean(renderJobId.trim()) &&
+    !["SUCCEEDED", "FAILED", "CANCELED"].includes(renderJobStatus);
 
   const inputClass =
     "h-11 w-full rounded-2xl border border-slate-300/90 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-200";
@@ -648,6 +735,8 @@ export default function Home() {
 
       setTtsUrl("");
       setRenderJobId("");
+      setRenderJobStatus("");
+      setRenderVideoUrl("");
       setScriptState({ loading: false, result: formatJson(data) });
       return;
     }
@@ -712,6 +801,8 @@ export default function Home() {
       const url = typeof data.url === "string" ? data.url : "";
       setTtsUrl(url);
       setRenderJobId("");
+      setRenderJobStatus("");
+      setRenderVideoUrl("");
       setTtsState({ loading: false, result: formatJson(data) });
       return;
     }
@@ -728,6 +819,8 @@ export default function Home() {
       return;
     }
 
+    setRenderVideoUrl("");
+    setRenderJobStatus("");
     setRenderState({ loading: true, result: dict.video.submitting });
     const runtimeVideoModel = selectedVideoProvider ? toRuntimeVideoModelConfig(selectedVideoProvider) : null;
 
@@ -748,10 +841,14 @@ export default function Home() {
     if (response.ok) {
       const jobId = typeof data.renderJobId === "string" ? data.renderJobId : "";
       setRenderJobId(jobId);
+      if (typeof data.status === "string") {
+        setRenderJobStatus(data.status);
+      }
       setRenderState({ loading: false, result: formatJson(data) });
       return;
     }
 
+    setRenderJobId("");
     setRenderState({
       loading: false,
       result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
@@ -1287,6 +1384,33 @@ export default function Home() {
               </div>
 
               <p className="mt-3 text-xs text-slate-500">{dict.video.hint}</p>
+
+              {renderJobId ? (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3 text-xs text-slate-700">
+                  <p>
+                    <span className="font-semibold text-slate-600">{dict.video.jobId}:</span> {renderJobId}
+                  </p>
+                  <p className="mt-1">
+                    <span className="font-semibold text-slate-600">{dict.video.status}:</span> {renderJobStatus || "QUEUED"}
+                    {isRenderPolling ? ` · ${dict.video.polling}` : ""}
+                  </p>
+                </div>
+              ) : null}
+
+              {renderVideoUrl ? (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{dict.video.ready}</p>
+                  <video className="w-full rounded-xl" controls src={renderVideoUrl} />
+                  <a
+                    href={renderVideoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-block text-xs font-semibold text-teal-700 underline underline-offset-4"
+                  >
+                    {renderVideoUrl}
+                  </a>
+                </div>
+              ) : null}
 
               <ResponsePanel heading={dict.responseTitle} state={renderState} empty={dict.responseEmpty} />
             </article>

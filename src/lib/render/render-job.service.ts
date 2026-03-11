@@ -19,6 +19,7 @@ export type RenderJobRecord = {
   status: string;
   idempotencyKey: string;
   errorMessage?: string | null;
+  videoUrl?: string | null;
 };
 
 export type RenderJobDto = RenderJobRecord;

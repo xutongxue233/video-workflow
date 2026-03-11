@@ -23,6 +23,9 @@ function mapRecord(record: {
   status: RenderJobStatus;
   idempotencyKey: string;
   errorMessage: string | null;
+  video?: {
+    url: string;
+  } | null;
 }): RenderJobRecord {
   return {
     id: record.id,
@@ -38,6 +41,7 @@ function mapRecord(record: {
     status: record.status,
     idempotencyKey: record.idempotencyKey,
     errorMessage: record.errorMessage,
+    videoUrl: record.video?.url ?? null,
   };
 }
 
@@ -67,6 +71,13 @@ export function createPrismaRenderJobRepository(
     async findById(jobId: string): Promise<RenderJobRecord | null> {
       const record = await prisma.renderJob.findUnique({
         where: { id: jobId },
+        include: {
+          video: {
+            select: {
+              url: true,
+            },
+          },
+        },
       });
 
       if (!record) {
