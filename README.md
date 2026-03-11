@@ -66,6 +66,14 @@ Optional worker tuning:
 
 ## Run
 
+One-command dev startup (frontend + worker only):
+
+```bash
+npm run dev:all
+```
+
+This command starts `npm run worker` and `npm run dev` together via a Node script (`scripts/dev-all.mjs`). It does not install dependencies, run migrations, or start Redis.
+
 Start web app:
 
 ```bash
