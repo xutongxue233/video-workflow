@@ -91,9 +91,11 @@ describe("openai-compatible client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toContain("/chat/completions");
     expect(fetchMock.mock.calls[1]?.[0]).toContain("/responses");
+    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain('"input":[{"role":"system","content":"sys"}');
+    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain('"role":"user","content":"usr"');
   });
 
-  it("retries responses api with list input when provider requires list payload", async () => {
+  it("retries responses api with string input when provider rejects message-list format", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -105,13 +107,13 @@ describe("openai-compatible client", () => {
       .mockResolvedValueOnce({
         ok: false,
         status: 400,
-        text: async () => '{"detail":"Input must be a list"}',
+        text: async () => '{"detail":"Input must be a string"}',
       })
       .mockResolvedValueOnce({
         ok: true,
         text: async () =>
           JSON.stringify({
-            output_text: "{\"title\":\"ok-list\"}",
+            output_text: "{\"title\":\"ok-string\"}",
           }),
       });
     vi.stubGlobal("fetch", fetchMock);
@@ -127,13 +129,14 @@ describe("openai-compatible client", () => {
       userPrompt: "usr",
     });
 
-    expect(result).toBe("{\"title\":\"ok-list\"}");
+    expect(result).toBe("{\"title\":\"ok-string\"}");
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[1]?.[0]).toContain("/responses");
     expect(fetchMock.mock.calls[2]?.[0]).toContain("/responses");
-    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain('"input":"usr"');
-    expect(String(fetchMock.mock.calls[2]?.[1]?.body)).toContain('"input":[{"role":"system"');
-    expect(String(fetchMock.mock.calls[2]?.[1]?.body)).toContain('"role":"user"');
+    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain('"input":[{"role":"system","content":"sys"}');
+    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).toContain('"role":"user","content":"usr"');
+    expect(String(fetchMock.mock.calls[2]?.[1]?.body)).toContain('"input":"usr"');
+    expect(String(fetchMock.mock.calls[2]?.[1]?.body)).toContain('"instructions":"sys"');
   });
 });
 

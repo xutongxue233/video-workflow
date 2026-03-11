@@ -56,29 +56,35 @@ function shouldFallbackToResponses(input: { status: number; errorText: string })
   );
 }
 
-function shouldRetryResponsesWithListInput(input: { status: number; errorText: string }): boolean {
+function shouldRetryResponsesWithStringInput(input: { status: number; errorText: string }): boolean {
   const lowered = input.errorText.toLowerCase();
 
-  return input.status === 400 && lowered.includes("input must be a list");
+  return (
+    (input.status === 400 || input.status === 422) &&
+    (lowered.includes("input must be a string") ||
+      lowered.includes("input should be a string") ||
+      lowered.includes("input must be string") ||
+      lowered.includes("expected string"))
+  );
 }
 
 function buildResponsesBody(input: {
   model: string;
   systemPrompt: string;
   userPrompt: string;
-  format: "string" | "list";
+  format: "messages" | "string";
 }) {
-  if (input.format === "list") {
+  if (input.format === "messages") {
     return {
       model: input.model,
       input: [
         {
           role: "system",
-          content: [{ type: "input_text", text: input.systemPrompt }],
+          content: input.systemPrompt,
         },
         {
           role: "user",
-          content: [{ type: "input_text", text: input.userPrompt }],
+          content: input.userPrompt,
         },
       ],
       temperature: 0.4,
@@ -152,7 +158,7 @@ export function createOpenAICompatibleClient(config: {
                 model: input.model,
                 systemPrompt: input.systemPrompt,
                 userPrompt: input.userPrompt,
-                format: "string",
+                format: "messages",
               }),
             ),
           });
@@ -161,12 +167,12 @@ export function createOpenAICompatibleClient(config: {
             const responsesErrorText = await responsesResponse.text();
 
             if (
-              shouldRetryResponsesWithListInput({
+              shouldRetryResponsesWithStringInput({
                 status: responsesResponse.status,
                 errorText: responsesErrorText,
               })
             ) {
-              const listInputResponse = await fetch(`${normalizedBaseURL}/responses`, {
+              const stringInputResponse = await fetch(`${normalizedBaseURL}/responses`, {
                 method: "POST",
                 headers: commonHeaders,
                 body: JSON.stringify(
@@ -174,25 +180,25 @@ export function createOpenAICompatibleClient(config: {
                     model: input.model,
                     systemPrompt: input.systemPrompt,
                     userPrompt: input.userPrompt,
-                    format: "list",
+                    format: "string",
                   }),
                 ),
               });
 
-              if (!listInputResponse.ok) {
-                const listInputErrorText = await listInputResponse.text();
+              if (!stringInputResponse.ok) {
+                const stringInputErrorText = await stringInputResponse.text();
                 throw new Error(
-                  `OpenAI-compatible request failed: ${listInputResponse.status} ${listInputErrorText}`,
+                  `OpenAI-compatible request failed: ${stringInputResponse.status} ${stringInputErrorText}`,
                 );
               }
 
-              const listRawText = await listInputResponse.text();
-              const listJson = parseJsonOrThrow({
-                rawText: listRawText,
+              const stringRawText = await stringInputResponse.text();
+              const stringJson = parseJsonOrThrow({
+                rawText: stringRawText,
                 context: "OpenAI-compatible responses endpoint",
               });
 
-              return readResponsesOutput(listJson);
+              return readResponsesOutput(stringJson);
             }
 
             throw new Error(
