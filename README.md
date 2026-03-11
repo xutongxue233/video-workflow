@@ -57,6 +57,11 @@ Required for SeaDance video generation:
 - `SEADANCE_API_KEY`
 - `SEADANCE_VIDEO_MODEL`
 
+Optional when using dynamic runtime provider selection in settings:
+
+- `VIDEO_POLL_INTERVAL_MS` (fallbacks to `SEADANCE_POLL_INTERVAL_MS`)
+- `VIDEO_POLL_TIMEOUT_MS` (fallbacks to `SEADANCE_POLL_TIMEOUT_MS`)
+
 Optional worker tuning:
 
 - `SEADANCE_POLL_INTERVAL_MS` (default `2000`)
@@ -120,6 +125,8 @@ Implemented in Stage 1 + Stage 2 + OpenAI/SeaDance generation chain:
   - `POST /api/render-jobs`
   - `GET /api/render-jobs/[id]`
 - Home page (`/`) workbench for upload, script generation/editing, TTS, and video queue actions
+- Settings page (`/settings`) for local model provider configuration (text/image/video)
+- Model discovery endpoint: `POST /model/list`
 
 ## API Examples
 
@@ -163,6 +170,18 @@ curl -X POST http://localhost:3000/api/videos/generate \
   }'
 ```
 
+Discover provider model list:
+
+```bash
+curl -X POST http://localhost:3000/model/list \
+  -H "Content-Type: application/json" \
+  -d '{
+    "protocol": "openai",
+    "baseURL": "https://api.openai.com/v1",
+    "apiKey": "sk-..."
+  }'
+```
+
 Generate TTS voiceover:
 
 ```bash
@@ -184,3 +203,4 @@ curl http://localhost:3000/api/files/assets/example.png --output example.png
 
 - SQLite is intentionally used for MVP speed. For scaling, migrate to PostgreSQL.
 - `src/lib/tts/providers/mock-tts.provider.ts` is a development placeholder and should be replaced in production.
+- Model provider API keys configured in `/settings` are stored in browser local storage and not persisted in Prisma tables.

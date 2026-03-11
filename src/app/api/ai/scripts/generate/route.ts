@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 
+import { createGeminiCompatibleClient } from "../../../../../lib/ai/gemini-compatible.client";
 import { createOpenAICompatibleClient } from "../../../../../lib/ai/openai-compatible.client";
 import {
   createPrismaScriptGenerationRepository,
@@ -8,7 +9,43 @@ import {
 } from "../../../../../lib/ai/script-generation.service";
 import { prisma } from "../../../../../lib/db/prisma";
 
-function buildService() {
+const runtimeTextModelSchema = z.object({
+  protocol: z.enum(["openai", "gemini"]),
+  baseURL: z.string().url(),
+  apiKey: z.string().min(1),
+  modelId: z.string().min(1),
+});
+
+const requestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    productName: z.string().min(1),
+    sellingPoints: z.array(z.string().min(1)).min(1),
+    targetAudience: z.string().min(1),
+    tone: z.string().min(1),
+    durationSec: z.number().int().positive().max(180),
+    contentLanguage: z.enum(["zh-CN", "en-US"]).optional(),
+    modelProvider: runtimeTextModelSchema.optional(),
+  });
+
+function buildService(input: { modelProvider?: z.infer<typeof runtimeTextModelSchema> }) {
+  if (input.modelProvider) {
+    return createScriptGenerationService({
+      completionClient:
+        input.modelProvider.protocol === "gemini"
+          ? createGeminiCompatibleClient({
+              baseURL: input.modelProvider.baseURL,
+              apiKey: input.modelProvider.apiKey,
+            })
+          : createOpenAICompatibleClient({
+              baseURL: input.modelProvider.baseURL,
+              apiKey: input.modelProvider.apiKey,
+            }),
+      repository: createPrismaScriptGenerationRepository(prisma),
+      model: input.modelProvider.modelId,
+    });
+  }
+
   const baseURL = process.env.OPENAI_COMPAT_BASE_URL;
   const apiKey = process.env.OPENAI_COMPAT_API_KEY;
   const model = process.env.OPENAI_SCRIPT_MODEL;
@@ -31,9 +68,17 @@ function buildService() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const service = buildService();
-    const generated = await service.generateAndSave(body);
+    const body = requestSchema.parse(await request.json());
+    const service = buildService({ modelProvider: body.modelProvider });
+    const generated = await service.generateAndSave({
+      projectId: body.projectId,
+      productName: body.productName,
+      sellingPoints: body.sellingPoints,
+      targetAudience: body.targetAudience,
+      tone: body.tone,
+      durationSec: body.durationSec,
+      contentLanguage: body.contentLanguage,
+    });
 
     return NextResponse.json(generated, { status: 201 });
   } catch (error) {

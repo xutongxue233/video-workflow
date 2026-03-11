@@ -6,6 +6,10 @@ import { createPrismaRenderJobRepository } from "../lib/render/render-job.reposi
 import type { RenderJobRepository } from "../lib/render/render-job.service";
 import type { RenderPayload } from "../lib/render/render-job.types";
 import {
+  createGoogleCompatibleVideoClient,
+  createGoogleVideoService,
+} from "../lib/video/google-video.service";
+import {
   createOpenAICompatibleSeaDanceClient,
   createSeaDanceVideoService,
   type SeaDanceStatus,
@@ -69,6 +73,14 @@ function buildVideoPrompt(structuredJson: string, voiceStyle: string): string {
 }
 
 let cachedVideoService: VideoGenerationService | null = null;
+const runtimeVideoServiceCache = new Map<string, VideoGenerationService>();
+
+function getPollConfig() {
+  return {
+    pollIntervalMs: Number(process.env.VIDEO_POLL_INTERVAL_MS ?? process.env.SEADANCE_POLL_INTERVAL_MS ?? 2000),
+    pollTimeoutMs: Number(process.env.VIDEO_POLL_TIMEOUT_MS ?? process.env.SEADANCE_POLL_TIMEOUT_MS ?? 120000),
+  };
+}
 
 function getDefaultVideoService(): VideoGenerationService {
   if (cachedVideoService) {
@@ -83,17 +95,66 @@ function getDefaultVideoService(): VideoGenerationService {
     throw new Error("Missing SEADANCE_BASE_URL, SEADANCE_API_KEY, or SEADANCE_VIDEO_MODEL");
   }
 
+  const pollConfig = getPollConfig();
   cachedVideoService = createSeaDanceVideoService({
     client: createOpenAICompatibleSeaDanceClient({
       baseURL,
       apiKey,
     }),
     model,
-    pollIntervalMs: Number(process.env.SEADANCE_POLL_INTERVAL_MS ?? 2000),
-    pollTimeoutMs: Number(process.env.SEADANCE_POLL_TIMEOUT_MS ?? 120000),
+    pollIntervalMs: pollConfig.pollIntervalMs,
+    pollTimeoutMs: pollConfig.pollTimeoutMs,
   });
 
   return cachedVideoService;
+}
+
+function getRuntimeVideoService(payload: RenderPayload): VideoGenerationService | null {
+  const selectedVideoModel = payload.selectedVideoModel;
+
+  if (!selectedVideoModel) {
+    return null;
+  }
+
+  const cacheKey = [
+    selectedVideoModel.protocol,
+    selectedVideoModel.baseURL,
+    selectedVideoModel.modelId,
+  ].join("|");
+  const cachedService = runtimeVideoServiceCache.get(cacheKey);
+
+  if (cachedService) {
+    return cachedService;
+  }
+
+  const pollConfig = getPollConfig();
+  const service =
+    selectedVideoModel.protocol === "google"
+      ? createGoogleVideoService({
+          client: createGoogleCompatibleVideoClient({
+            baseURL: selectedVideoModel.baseURL,
+            apiKey: selectedVideoModel.apiKey,
+          }),
+          model: selectedVideoModel.modelId,
+          pollIntervalMs: pollConfig.pollIntervalMs,
+          pollTimeoutMs: pollConfig.pollTimeoutMs,
+        })
+      : createSeaDanceVideoService({
+          client: createOpenAICompatibleSeaDanceClient({
+            baseURL: selectedVideoModel.baseURL,
+            apiKey: selectedVideoModel.apiKey,
+          }),
+          model: selectedVideoModel.modelId,
+          pollIntervalMs: pollConfig.pollIntervalMs,
+          pollTimeoutMs: pollConfig.pollTimeoutMs,
+        });
+
+  runtimeVideoServiceCache.set(cacheKey, service);
+  return service;
+}
+
+function getVideoServiceForPayload(payload: RenderPayload): VideoGenerationService {
+  return getRuntimeVideoService(payload) ?? getDefaultVideoService();
 }
 
 export function createRenderJobProcessor(deps: {
@@ -153,7 +214,7 @@ export function createRenderJobProcessor(deps: {
 export async function processRenderQueueJob(job: Job<RenderPayload>) {
   const processor = createRenderJobProcessor({
     repository: createPrismaRenderJobRepository(),
-    videoService: getDefaultVideoService(),
+    videoService: getVideoServiceForPayload(job.data),
   });
 
   await processor(job);

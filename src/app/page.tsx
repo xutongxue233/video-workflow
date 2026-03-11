@@ -1,6 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+
+import {
+  loadStoredModelProvidersFromLocalStorage,
+  toRuntimeTextModelConfig,
+  toRuntimeVideoModelConfig,
+  type StoredModelProvider,
+} from "@/lib/models/model-settings.local";
 
 type Locale = "zh-CN" | "en-US";
 type StepId = "asset" | "script" | "tts" | "video";
@@ -443,11 +451,30 @@ export default function Home() {
   const [renderState, setRenderState] = useState<RequestState>({ loading: false, result: "" });
   const [renderJobId, setRenderJobId] = useState("");
   const [renderAspectRatio, setRenderAspectRatio] = useState<"9:16" | "16:9">("9:16");
+  const [storedModelProviders, setStoredModelProviders] = useState<StoredModelProvider[]>(() =>
+    loadStoredModelProvidersFromLocalStorage(),
+  );
+  const [selectedTextProviderId, setSelectedTextProviderId] = useState("");
+  const [selectedVideoProviderId, setSelectedVideoProviderId] = useState("");
 
   useEffect(() => {
     document.documentElement.lang = locale;
     window.localStorage.setItem(LOCALE_KEY, locale);
   }, [locale]);
+
+  useEffect(() => {
+    const reloadProviders = () => {
+      setStoredModelProviders(loadStoredModelProvidersFromLocalStorage());
+    };
+
+    window.addEventListener("focus", reloadProviders);
+    window.addEventListener("storage", reloadProviders);
+
+    return () => {
+      window.removeEventListener("focus", reloadProviders);
+      window.removeEventListener("storage", reloadProviders);
+    };
+  }, []);
 
   const dict = TEXT[locale];
 
@@ -482,6 +509,46 @@ export default function Home() {
         {} as Record<StepId, StepView & { index: number }>,
       ),
     [steps],
+  );
+
+  const availableTextProviders = useMemo(
+    () =>
+      storedModelProviders.filter(
+        (provider) => provider.enabled && provider.capability === "text" && Boolean(toRuntimeTextModelConfig(provider)),
+      ),
+    [storedModelProviders],
+  );
+  const availableVideoProviders = useMemo(
+    () =>
+      storedModelProviders.filter(
+        (provider) =>
+          provider.enabled && provider.capability === "video" && Boolean(toRuntimeVideoModelConfig(provider)),
+      ),
+    [storedModelProviders],
+  );
+
+  const resolvedTextProviderId = useMemo(
+    () =>
+      availableTextProviders.some((provider) => provider.id === selectedTextProviderId)
+        ? selectedTextProviderId
+        : (availableTextProviders[0]?.id ?? ""),
+    [availableTextProviders, selectedTextProviderId],
+  );
+  const resolvedVideoProviderId = useMemo(
+    () =>
+      availableVideoProviders.some((provider) => provider.id === selectedVideoProviderId)
+        ? selectedVideoProviderId
+        : (availableVideoProviders[0]?.id ?? ""),
+    [availableVideoProviders, selectedVideoProviderId],
+  );
+
+  const selectedTextProvider = useMemo(
+    () => availableTextProviders.find((provider) => provider.id === resolvedTextProviderId) ?? null,
+    [availableTextProviders, resolvedTextProviderId],
+  );
+  const selectedVideoProvider = useMemo(
+    () => availableVideoProviders.find((provider) => provider.id === resolvedVideoProviderId) ?? null,
+    [availableVideoProviders, resolvedVideoProviderId],
   );
 
   const inputClass =
@@ -541,6 +608,7 @@ export default function Home() {
     }
 
     setScriptState({ loading: true, result: dict.script.submitting });
+    const runtimeTextModel = selectedTextProvider ? toRuntimeTextModelConfig(selectedTextProvider) : null;
 
     const response = await fetch("/api/ai/scripts/generate", {
       method: "POST",
@@ -553,6 +621,7 @@ export default function Home() {
         tone: generationPayload.tone,
         durationSec: Number(generationPayload.durationSec),
         contentLanguage,
+        modelProvider: runtimeTextModel ?? undefined,
       }),
     });
 
@@ -658,11 +727,18 @@ export default function Home() {
     }
 
     setRenderState({ loading: true, result: dict.video.submitting });
+    const runtimeVideoModel = selectedVideoProvider ? toRuntimeVideoModelConfig(selectedVideoProvider) : null;
 
     const response = await fetch("/api/videos/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, scriptId, voiceStyle, aspectRatio: renderAspectRatio }),
+      body: JSON.stringify({
+        projectId,
+        scriptId,
+        voiceStyle,
+        aspectRatio: renderAspectRatio,
+        selectedVideoModel: runtimeVideoModel ?? undefined,
+      }),
     });
 
     const data = toJsonRecord(await readJsonResponse(response));
@@ -719,6 +795,12 @@ export default function Home() {
                   );
                 })}
               </div>
+              <Link
+                href="/settings"
+                className="mt-2 inline-flex h-9 w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                模型配置 / Model Settings
+              </Link>
             </div>
           </div>
 
@@ -950,6 +1032,33 @@ export default function Home() {
                   </label>
                 </div>
 
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">Text Model Provider</p>
+                  {availableTextProviders.length > 0 ? (
+                    <select
+                      value={resolvedTextProviderId}
+                      onChange={(event) => setSelectedTextProviderId(event.target.value)}
+                      className={`${inputClass} mt-2`}
+                    >
+                      {availableTextProviders.map((provider) => (
+                        <option key={`text-provider-${provider.id}`} value={provider.id}>
+                          {provider.name} | {provider.selectedModelId || provider.manualModelId || "manual model"}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-600">
+                      未发现可用文本模型，请先在
+                      {" "}
+                      <Link href="/settings" className="font-semibold text-teal-700 underline underline-offset-4">
+                        设置页
+                      </Link>
+                      {" "}
+                      启用文本供应商。
+                    </p>
+                  )}
+                </div>
+
                 <button type="submit" disabled={scriptState.loading} className={primaryButtonClass}>
                   {scriptState.loading ? dict.script.submitting : dict.script.submit}
                 </button>
@@ -1113,6 +1222,33 @@ export default function Home() {
               </div>
 
               <div className="mt-5 space-y-3">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">Video Model Provider</p>
+                  {availableVideoProviders.length > 0 ? (
+                    <select
+                      value={resolvedVideoProviderId}
+                      onChange={(event) => setSelectedVideoProviderId(event.target.value)}
+                      className={`${inputClass} mt-2`}
+                    >
+                      {availableVideoProviders.map((provider) => (
+                        <option key={`video-provider-${provider.id}`} value={provider.id}>
+                          {provider.name} | {provider.selectedModelId || provider.manualModelId || "manual model"}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-600">
+                      未发现可用视频模型，请先在
+                      {" "}
+                      <Link href="/settings" className="font-semibold text-teal-700 underline underline-offset-4">
+                        设置页
+                      </Link>
+                      {" "}
+                      启用视频供应商。
+                    </p>
+                  )}
+                </div>
+
                 <div>
                   <p className="mb-2 text-sm font-semibold text-slate-700">{dict.video.ratio}</p>
                   <div className="grid gap-2 sm:grid-cols-2">
