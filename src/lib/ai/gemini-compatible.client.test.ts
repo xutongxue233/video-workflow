@@ -10,19 +10,20 @@ describe("gemini-compatible client", () => {
   it("requests generateContent and returns text output", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  text: "{\"title\":\"ok\"}",
-                },
-              ],
+      text: async () =>
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: "{\"title\":\"ok\"}",
+                  },
+                ],
+              },
             },
-          },
-        ],
-      }),
+          ],
+        }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -66,6 +67,27 @@ describe("gemini-compatible client", () => {
         userPrompt: "user",
       }),
     ).rejects.toThrow("Gemini request failed: 403 denied");
+  });
+
+  it("throws clear error when provider returns html instead of json", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => "<!doctype html><html><body>gateway page</body></html>",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createGeminiCompatibleClient({
+      baseURL: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "gem-key",
+    });
+
+    await expect(
+      client.createJsonCompletion({
+        model: "gemini-2.5-flash",
+        systemPrompt: "system",
+        userPrompt: "user",
+      }),
+    ).rejects.toThrow("did not return JSON");
   });
 });
 

@@ -26,6 +26,17 @@ export type GeminiCompatibleChatClient = {
   }): Promise<string>;
 };
 
+function parseJsonOrThrow(input: { rawText: string; context: string }): unknown {
+  try {
+    return JSON.parse(input.rawText);
+  } catch {
+    const preview = input.rawText.slice(0, 120).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `${input.context} did not return JSON. Check protocol/baseURL. Response preview: ${preview}`,
+    );
+  }
+}
+
 function normalizeModel(model: string): string {
   return model.replace(/^models\//, "");
 }
@@ -70,7 +81,13 @@ export function createGeminiCompatibleClient(config: {
         throw new Error(`Gemini request failed: ${response.status} ${errorText}`);
       }
 
-      const json = geminiResponseSchema.parse(await response.json());
+      const rawText = await response.text();
+      const json = geminiResponseSchema.parse(
+        parseJsonOrThrow({
+          rawText,
+          context: "Gemini endpoint",
+        }),
+      );
       const content = json.candidates[0]?.content.parts[0]?.text;
 
       if (!content) {

@@ -28,6 +28,33 @@ const requestSchema = z
     modelProvider: runtimeTextModelSchema.optional(),
   });
 
+const modelInputValidationMarkers = [
+  "schema",
+  "valid JSON",
+  "did not return JSON",
+  "OpenAI-compatible request failed",
+  "Gemini request failed",
+  "response did not include message content",
+  "response did not include candidate text",
+  "Model response must be valid JSON",
+  "Model response failed schema validation",
+];
+
+function mapKnownError(error: Error): { message: string; status: number } | null {
+  if (error.message.includes("Missing OPENAI_COMPAT_BASE_URL")) {
+    return {
+      message: "No text model configured. Configure a text model in settings or provide modelProvider.",
+      status: 422,
+    };
+  }
+
+  if (modelInputValidationMarkers.some((marker) => error.message.includes(marker))) {
+    return { message: error.message, status: 422 };
+  }
+
+  return null;
+}
+
 function buildService(input: { modelProvider?: z.infer<typeof runtimeTextModelSchema> }) {
   if (input.modelProvider) {
     return createScriptGenerationService({
@@ -92,12 +119,11 @@ export async function POST(request: Request) {
       );
     }
 
-    if (error instanceof Error && error.message.includes("schema")) {
-      return NextResponse.json({ message: error.message }, { status: 422 });
-    }
-
-    if (error instanceof Error && error.message.includes("valid JSON")) {
-      return NextResponse.json({ message: error.message }, { status: 422 });
+    if (error instanceof Error) {
+      const mapped = mapKnownError(error);
+      if (mapped) {
+        return NextResponse.json({ message: mapped.message }, { status: mapped.status });
+      }
     }
 
     return NextResponse.json({ message: "failed to generate script" }, { status: 500 });

@@ -20,6 +20,17 @@ export type OpenAICompatibleChatClient = {
   }): Promise<string>;
 };
 
+function parseJsonOrThrow(input: { rawText: string; context: string }): unknown {
+  try {
+    return JSON.parse(input.rawText);
+  } catch {
+    const preview = input.rawText.slice(0, 120).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `${input.context} did not return JSON. Check protocol/baseURL. Response preview: ${preview}`,
+    );
+  }
+}
+
 export function createOpenAICompatibleClient(config: {
   baseURL: string;
   apiKey: string;
@@ -50,7 +61,11 @@ export function createOpenAICompatibleClient(config: {
         throw new Error(`OpenAI-compatible request failed: ${response.status} ${errorText}`);
       }
 
-      const json = await response.json();
+      const rawText = await response.text();
+      const json = parseJsonOrThrow({
+        rawText,
+        context: "OpenAI-compatible endpoint",
+      });
       const parsed = chatCompletionResponseSchema.parse(json);
       const content = parsed.choices[0]?.message.content;
 
