@@ -51,4 +51,51 @@ describe("render-job service", () => {
 
     expect(result).toBeNull();
   });
+
+  it("forwards selected runtime video model config to queue payload", async () => {
+    const repository = {
+      createQueuedJob: vi.fn().mockResolvedValue({
+        id: "job_2",
+        projectId: "proj_1",
+        templateId: "tpl_a",
+        voiceStyle: "energetic",
+        aspectRatio: "16:9",
+        status: "QUEUED",
+        idempotencyKey: "idem_2",
+      }),
+      findById: vi.fn(),
+    };
+    const queue = {
+      enqueue: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const service = createRenderJobService({ repository, queue });
+
+    await service.create({
+      projectId: "proj_1",
+      templateId: "tpl_a",
+      scriptId: "scr_1",
+      voiceStyle: "energetic",
+      aspectRatio: "16:9",
+      selectedVideoModel: {
+        protocol: "google",
+        baseURL: "https://generativelanguage.googleapis.com/v1beta",
+        apiKey: "local-key",
+        modelId: "models/veo-3.0-generate-preview",
+      },
+    });
+
+    expect(queue.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "google",
+        selectedVideoModel: {
+          protocol: "google",
+          baseURL: "https://generativelanguage.googleapis.com/v1beta",
+          apiKey: "local-key",
+          modelId: "models/veo-3.0-generate-preview",
+        },
+      }),
+      expect.any(String),
+    );
+  });
 });

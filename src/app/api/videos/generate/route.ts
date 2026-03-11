@@ -12,6 +12,14 @@ const requestSchema = z.object({
   aspectRatio: z.enum(["9:16", "16:9"]),
   voiceStyle: z.string().min(1),
   templateId: z.string().min(1).optional(),
+  selectedVideoModel: z
+    .object({
+      protocol: z.enum(["seedance", "google"]),
+      baseURL: z.string().url(),
+      apiKey: z.string().min(1),
+      modelId: z.string().min(1),
+    })
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -29,7 +37,8 @@ export async function POST(request: Request) {
       scriptId: body.scriptId,
       voiceStyle: body.voiceStyle,
       aspectRatio: body.aspectRatio,
-      provider: "seadance",
+      provider: body.selectedVideoModel?.protocol ?? "seadance",
+      selectedVideoModel: body.selectedVideoModel,
     });
 
     return NextResponse.json(
