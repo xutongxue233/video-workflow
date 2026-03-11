@@ -5,6 +5,7 @@ import { ensureWorkflowProjectExists } from "../projects/workflow-project";
 
 import type {
   CreateQueuedJobInput,
+  CreateQueuedJobResult,
   RenderJobRecord,
   RenderJobRepository,
 } from "./render-job.service";
@@ -45,27 +46,86 @@ function mapRecord(record: {
   };
 }
 
+function isIdempotencyUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = (error as { code?: unknown }).code;
+
+  if (code !== "P2002") {
+    return false;
+  }
+
+  const target = (error as { meta?: { target?: unknown } }).meta?.target;
+
+  if (Array.isArray(target)) {
+    return target.includes("idempotencyKey");
+  }
+
+  return target === "idempotencyKey";
+}
+
 export function createPrismaRenderJobRepository(
   prisma: PrismaClient = defaultPrisma,
 ): RenderJobRepository {
-  return {
-    async createQueuedJob(input: CreateQueuedJobInput): Promise<RenderJobRecord> {
-      await ensureWorkflowProjectExists(prisma, input.projectId);
-
-      const record = await prisma.renderJob.create({
-        data: {
-          projectId: input.projectId,
-          scriptId: input.scriptId,
-          templateId: input.templateId,
-          voiceStyle: input.voiceStyle,
-          aspectRatio: input.aspectRatio,
-          provider: input.provider,
-          status: RenderJobStatus.QUEUED,
-          idempotencyKey: input.idempotencyKey,
+  async function findByIdempotencyKeyRaw(idempotencyKey: string) {
+    return prisma.renderJob.findUnique({
+      where: { idempotencyKey },
+      include: {
+        video: {
+          select: {
+            url: true,
+          },
         },
-      });
+      },
+    });
+  }
 
-      return mapRecord(record);
+  return {
+    async createQueuedJob(input: CreateQueuedJobInput): Promise<CreateQueuedJobResult> {
+      await ensureWorkflowProjectExists(prisma, input.projectId);
+      const existing = await findByIdempotencyKeyRaw(input.idempotencyKey);
+
+      if (existing) {
+        return {
+          record: mapRecord(existing),
+          created: false,
+        };
+      }
+
+      try {
+        const record = await prisma.renderJob.create({
+          data: {
+            projectId: input.projectId,
+            scriptId: input.scriptId,
+            templateId: input.templateId,
+            voiceStyle: input.voiceStyle,
+            aspectRatio: input.aspectRatio,
+            provider: input.provider,
+            status: RenderJobStatus.QUEUED,
+            idempotencyKey: input.idempotencyKey,
+          },
+        });
+
+        return {
+          record: mapRecord(record),
+          created: true,
+        };
+      } catch (error) {
+        if (isIdempotencyUniqueConstraintError(error)) {
+          const record = await findByIdempotencyKeyRaw(input.idempotencyKey);
+
+          if (record) {
+            return {
+              record: mapRecord(record),
+              created: false,
+            };
+          }
+        }
+
+        throw error;
+      }
     },
 
     async findById(jobId: string): Promise<RenderJobRecord | null> {
@@ -88,16 +148,7 @@ export function createPrismaRenderJobRepository(
     },
 
     async findByIdempotencyKey(idempotencyKey: string): Promise<RenderJobRecord | null> {
-      const record = await prisma.renderJob.findUnique({
-        where: { idempotencyKey },
-        include: {
-          video: {
-            select: {
-              url: true,
-            },
-          },
-        },
-      });
+      const record = await findByIdempotencyKeyRaw(idempotencyKey);
 
       if (!record) {
         return null;

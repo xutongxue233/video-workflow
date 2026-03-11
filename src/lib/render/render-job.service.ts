@@ -5,6 +5,11 @@ export type CreateQueuedJobInput = RenderPayload & {
   idempotencyKey: string;
 };
 
+export type CreateQueuedJobResult = {
+  record: RenderJobRecord;
+  created: boolean;
+};
+
 export type RenderJobRecord = {
   id: string;
   projectId: string;
@@ -25,7 +30,7 @@ export type RenderJobRecord = {
 export type RenderJobDto = RenderJobRecord;
 
 export type RenderJobRepository = {
-  createQueuedJob(input: CreateQueuedJobInput): Promise<RenderJobRecord>;
+  createQueuedJob(input: CreateQueuedJobInput): Promise<CreateQueuedJobResult>;
   findById(jobId: string): Promise<RenderJobRecord | null>;
   findByIdempotencyKey?(idempotencyKey: string): Promise<RenderJobRecord | null>;
   markRunning(jobId: string): Promise<void>;
@@ -62,12 +67,14 @@ export function createRenderJobService(deps: {
       const payload = buildRenderPayload(input);
       const idempotencyKey = buildRenderJobIdempotencyKey(payload);
 
-      const record = await deps.repository.createQueuedJob({
+      const { record, created } = await deps.repository.createQueuedJob({
         ...payload,
         idempotencyKey,
       });
 
-      await deps.queue.enqueue(payload, idempotencyKey);
+      if (created) {
+        await deps.queue.enqueue(payload, idempotencyKey);
+      }
 
       return record;
     },
