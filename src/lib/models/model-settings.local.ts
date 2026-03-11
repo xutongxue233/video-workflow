@@ -68,6 +68,10 @@ export function loadStoredModelProvidersFromLocalStorage(): StoredModelProvider[
   }
 }
 
+export function getSsrSafeInitialModelProviders(): StoredModelProvider[] {
+  return [];
+}
+
 export function saveStoredModelProvidersToLocalStorage(input: StoredModelProvider[]): void {
   if (typeof window === "undefined") {
     return;

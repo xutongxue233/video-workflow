@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getSsrSafeInitialModelProviders,
   parseStoredModelProviders,
   resolveProviderModelId,
   toRuntimeTextModelConfig,
@@ -86,6 +87,10 @@ describe("model-settings local helpers", () => {
       apiKey: "google-key",
       modelId: "models/veo-3.0-generate-preview",
     });
+  });
+
+  it("returns empty initial providers for SSR-safe first render", () => {
+    expect(getSsrSafeInitialModelProviders()).toEqual([]);
   });
 });
 

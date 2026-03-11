@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import {
+  getSsrSafeInitialModelProviders,
   loadStoredModelProvidersFromLocalStorage,
   toRuntimeTextModelConfig,
   toRuntimeVideoModelConfig,
@@ -452,7 +453,7 @@ export default function Home() {
   const [renderJobId, setRenderJobId] = useState("");
   const [renderAspectRatio, setRenderAspectRatio] = useState<"9:16" | "16:9">("9:16");
   const [storedModelProviders, setStoredModelProviders] = useState<StoredModelProvider[]>(() =>
-    loadStoredModelProvidersFromLocalStorage(),
+    getSsrSafeInitialModelProviders(),
   );
   const [selectedTextProviderId, setSelectedTextProviderId] = useState("");
   const [selectedVideoProviderId, setSelectedVideoProviderId] = useState("");
@@ -467,6 +468,7 @@ export default function Home() {
       setStoredModelProviders(loadStoredModelProvidersFromLocalStorage());
     };
 
+    reloadProviders();
     window.addEventListener("focus", reloadProviders);
     window.addEventListener("storage", reloadProviders);
 
