@@ -162,16 +162,28 @@ export function createRenderJobProcessor(deps: {
   videoService: VideoGenerationService;
 }) {
   return async function process(input: Pick<Job<RenderPayload>, "id" | "data">): Promise<void> {
-    const jobId = input.id?.toString();
+    const queueJobId = input.id?.toString();
 
-    if (!jobId) {
+    if (!queueJobId) {
       throw new Error("Queue job id is required");
     }
 
-    await deps.repository.incrementAttemptCount(jobId);
-    await deps.repository.markRunning(jobId);
+    const resolvedJob =
+      (await deps.repository.findById(queueJobId)) ??
+      (deps.repository.findByIdempotencyKey
+        ? await deps.repository.findByIdempotencyKey(queueJobId)
+        : null);
+
+    if (!resolvedJob) {
+      throw new Error(`Render job not found for queue id ${queueJobId}`);
+    }
+
+    const jobId = resolvedJob.id;
 
     try {
+      await deps.repository.incrementAttemptCount(jobId);
+      await deps.repository.markRunning(jobId);
+
       const structuredJson = await deps.repository.getScriptStructuredJson(input.data.scriptId);
 
       if (!structuredJson) {

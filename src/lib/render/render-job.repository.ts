@@ -87,6 +87,25 @@ export function createPrismaRenderJobRepository(
       return mapRecord(record);
     },
 
+    async findByIdempotencyKey(idempotencyKey: string): Promise<RenderJobRecord | null> {
+      const record = await prisma.renderJob.findUnique({
+        where: { idempotencyKey },
+        include: {
+          video: {
+            select: {
+              url: true,
+            },
+          },
+        },
+      });
+
+      if (!record) {
+        return null;
+      }
+
+      return mapRecord(record);
+    },
+
     async markRunning(jobId: string): Promise<void> {
       await prisma.renderJob.update({
         where: { id: jobId },

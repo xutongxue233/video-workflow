@@ -27,6 +27,7 @@ export type RenderJobDto = RenderJobRecord;
 export type RenderJobRepository = {
   createQueuedJob(input: CreateQueuedJobInput): Promise<RenderJobRecord>;
   findById(jobId: string): Promise<RenderJobRecord | null>;
+  findByIdempotencyKey?(idempotencyKey: string): Promise<RenderJobRecord | null>;
   markRunning(jobId: string): Promise<void>;
   markSucceeded(jobId: string): Promise<void>;
   markFailed(jobId: string, errorMessage: string): Promise<void>;

@@ -32,6 +32,37 @@ describe("render-job repository", () => {
     expect(job?.videoUrl).toBe("https://cdn.example.com/out.mp4");
   });
 
+  it("finds job by idempotency key when queue id is hashed", async () => {
+    const repository = createPrismaRenderJobRepository({
+      renderJob: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "job_cuid_1",
+          projectId: "proj_1",
+          templateId: "tpl_1",
+          scriptId: "scr_1",
+          voiceStyle: "energetic",
+          aspectRatio: "9:16",
+          provider: "seadance",
+          externalJobId: "ext_1",
+          externalStatus: "running",
+          attemptCount: 1,
+          status: "RUNNING",
+          idempotencyKey: "hash_abc",
+          errorMessage: null,
+          video: {
+            url: "https://cdn.example.com/out.mp4",
+          },
+        }),
+      },
+    } as never);
+
+    const job = await repository.findByIdempotencyKey?.("hash_abc");
+
+    expect(job?.id).toBe("job_cuid_1");
+    expect(job?.idempotencyKey).toBe("hash_abc");
+    expect(job?.videoUrl).toBe("https://cdn.example.com/out.mp4");
+  });
+
   it("returns null when job does not exist", async () => {
     const repository = createPrismaRenderJobRepository({
       renderJob: {
@@ -44,4 +75,3 @@ describe("render-job repository", () => {
     expect(job).toBeNull();
   });
 });
-
