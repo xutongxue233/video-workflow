@@ -12,6 +12,7 @@ const generationInputSchema = z.object({
   targetAudience: z.string().min(1),
   tone: z.string().min(1),
   durationSec: z.number().int().positive().max(180),
+  contentLanguage: z.enum(["zh-CN", "en-US"]).default("zh-CN"),
 });
 
 const generatedScriptSchema = z.object({
@@ -65,7 +66,7 @@ function buildUserPrompt(input: z.infer<typeof generationInputSchema>): string {
       targetAudience: input.targetAudience,
       tone: input.tone,
       durationSec: input.durationSec,
-      language: "zh-CN",
+      language: input.contentLanguage,
     },
     null,
     2,

@@ -102,4 +102,53 @@ describe("script generation service", () => {
       }),
     ).rejects.toThrow("schema");
   });
+
+  it("uses requested content language in generation prompt", async () => {
+    const completionClient = {
+      createJsonCompletion: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          title: "Dragon Mini Promo",
+          hook: "Print stunning dragons in one night.",
+          voiceover: "Meet the miniature dragon everyone wants on their table.",
+          cta: "Download and print now.",
+          shots: [
+            {
+              index: 1,
+              durationSec: 6,
+              visual: "Reveal finished dragon model on rotating stand",
+              caption: "Ultra detail, tabletop ready",
+              camera: "slow orbit",
+            },
+          ],
+        }),
+      ),
+    };
+
+    const service = createScriptGenerationService({
+      completionClient,
+      repository: {
+        createGeneratedScript: vi.fn().mockResolvedValue({
+          id: "scr_1",
+        }),
+      },
+      model: "gpt-script-v1",
+    });
+
+    await service.generateAndSave({
+      projectId: "proj_1",
+      productName: "Dragon Mini",
+      sellingPoints: ["high detail", "support-friendly"],
+      targetAudience: "tabletop gamers",
+      tone: "energetic",
+      durationSec: 30,
+      contentLanguage: "en-US",
+    });
+
+    const call = completionClient.createJsonCompletion.mock.calls[0]?.[0];
+    const promptPayload = JSON.parse(call?.userPrompt ?? "{}") as {
+      language?: string;
+    };
+
+    expect(promptPayload.language).toBe("en-US");
+  });
 });
