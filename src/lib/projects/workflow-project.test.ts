@@ -3,10 +3,30 @@ import { describe, expect, it, vi } from "vitest";
 import {
   WORKFLOW_DEFAULT_TEAM_ID,
   WORKFLOW_DEFAULT_TEAM_NAME,
+  ensureWorkflowTeamExists,
   ensureWorkflowProjectExists,
 } from "./workflow-project";
 
 describe("workflow-project helper", () => {
+  it("upserts default team", async () => {
+    const teamUpsert = vi.fn().mockResolvedValue({});
+
+    await ensureWorkflowTeamExists(
+      {
+        team: { upsert: teamUpsert },
+      } as never,
+    );
+
+    expect(teamUpsert).toHaveBeenCalledWith({
+      where: { id: WORKFLOW_DEFAULT_TEAM_ID },
+      update: {},
+      create: {
+        id: WORKFLOW_DEFAULT_TEAM_ID,
+        name: WORKFLOW_DEFAULT_TEAM_NAME,
+      },
+    });
+  });
+
   it("upserts default team and project for given projectId", async () => {
     const teamUpsert = vi.fn().mockResolvedValue({});
     const projectUpsert = vi.fn().mockResolvedValue({});

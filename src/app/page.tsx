@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   WORKFLOW_DEFAULT_PROJECT_ID,
   buildProjectDetailPath,
-  normalizeProjectIdInput,
 } from "@/lib/projects/project-navigation";
 
 type Locale = "zh-CN" | "en-US";
@@ -59,8 +58,8 @@ const TEXT: Record<Locale, Dict> = {
     heroDesc: "先选择项目卡片，再进入项目详情页进行配置与生成。",
     refresh: "刷新项目",
     refreshing: "刷新中...",
-    createLabel: "新建项目 ID",
-    createPlaceholder: "例如：proj_dragon_launch",
+    createLabel: "新建项目标题",
+    createPlaceholder: "例如：龙年新品发布",
     createButton: "创建并进入",
     cardsTitle: "项目列表",
     cardsHint: "点击任意卡片进入详细配置与生成工作台。",
@@ -85,8 +84,8 @@ const TEXT: Record<Locale, Dict> = {
     heroDesc: "Select a project card first, then open the detail workspace for configuration and generation.",
     refresh: "Refresh Projects",
     refreshing: "Refreshing...",
-    createLabel: "New Project ID",
-    createPlaceholder: "e.g. proj_dragon_launch",
+    createLabel: "New Project Title",
+    createPlaceholder: "e.g. Dragon Product Launch",
     createButton: "Create & Open",
     cardsTitle: "Projects",
     cardsHint: "Click a card to open the detailed config and generation workspace.",
@@ -131,7 +130,7 @@ export default function Home() {
   const router = useRouter();
   const [locale, setLocale] = useState<Locale>("zh-CN");
   const [projects, setProjects] = useState<ProjectSummaryItem[]>([]);
-  const [draftProjectId, setDraftProjectId] = useState(WORKFLOW_DEFAULT_PROJECT_ID);
+  const [draftProjectTitle, setDraftProjectTitle] = useState("");
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
@@ -199,7 +198,12 @@ export default function Home() {
   );
 
   async function handleCreateProject() {
-    const normalizedProjectId = normalizeProjectIdInput(draftProjectId);
+    const normalizedProjectTitle = draftProjectTitle.trim();
+    if (!normalizedProjectTitle) {
+      setMessage(locale === "zh-CN" ? "请输入项目标题。" : "Please enter a project title.");
+      return;
+    }
+
     setCreating(true);
 
     try {
@@ -207,8 +211,7 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectId: normalizedProjectId,
-          name: normalizedProjectId,
+          name: normalizedProjectTitle,
         }),
       });
 
@@ -218,7 +221,17 @@ export default function Home() {
         return;
       }
 
-      router.push(buildProjectDetailPath(normalizedProjectId));
+      const createdProjectId = typeof data.id === "string" ? data.id : "";
+      if (!createdProjectId) {
+        setMessage(
+          locale === "zh-CN"
+            ? "项目创建成功，但未获取到项目 ID。"
+            : "Project created, but no project ID was returned.",
+        );
+        return;
+      }
+
+      router.push(buildProjectDetailPath(createdProjectId));
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -279,8 +292,8 @@ export default function Home() {
             <label className="space-y-1">
               <span className="text-sm font-semibold text-slate-700">{dict.createLabel}</span>
               <input
-                value={draftProjectId}
-                onChange={(event) => setDraftProjectId(event.target.value)}
+                value={draftProjectTitle}
+                onChange={(event) => setDraftProjectTitle(event.target.value)}
                 placeholder={dict.createPlaceholder}
                 className="h-11 w-full rounded-2xl border border-slate-300/90 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-200"
               />
@@ -298,7 +311,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => void handleCreateProject()}
-                disabled={creating}
+                disabled={creating || !draftProjectTitle.trim()}
                 className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl bg-teal-700 px-4 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-55"
               >
                 {creating ? "..." : dict.createButton}

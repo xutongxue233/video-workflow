@@ -2,13 +2,27 @@ import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
 import { prisma } from "@/lib/db/prisma";
-import { ensureWorkflowProjectExists } from "@/lib/projects/workflow-project";
+import {
+  WORKFLOW_DEFAULT_TEAM_ID,
+  ensureWorkflowProjectExists,
+  ensureWorkflowTeamExists,
+} from "@/lib/projects/workflow-project";
 
-const createProjectSchema = z.object({
-  projectId: z.string().min(1),
-  name: z.string().min(1).optional(),
-  description: z.string().optional(),
-});
+const createProjectSchema = z
+  .object({
+    projectId: z.string().trim().min(1).optional(),
+    name: z.string().trim().optional(),
+    description: z.string().trim().optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.projectId && !value.name) {
+      context.addIssue({
+        code: "custom",
+        path: ["name"],
+        message: "name is required when projectId is omitted",
+      });
+    }
+  });
 
 function parseLimit(raw: string | null, fallback = 30): number {
   const parsed = Number(raw);
@@ -102,14 +116,34 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = createProjectSchema.parse(await request.json());
+    const description = body.description || undefined;
 
-    await ensureWorkflowProjectExists(prisma, body.projectId);
+    if (body.projectId) {
+      await ensureWorkflowProjectExists(prisma, body.projectId);
 
-    const project = await prisma.project.update({
-      where: { id: body.projectId },
+      const project = await prisma.project.update({
+        where: { id: body.projectId },
+        data: {
+          name: body.name || undefined,
+          description,
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          updatedAt: true,
+        },
+      });
+
+      return NextResponse.json(project, { status: 201 });
+    }
+
+    await ensureWorkflowTeamExists(prisma);
+    const project = await prisma.project.create({
       data: {
-        name: body.name?.trim() || undefined,
-        description: body.description ?? undefined,
+        teamId: WORKFLOW_DEFAULT_TEAM_ID,
+        name: body.name!,
+        description,
       },
       select: {
         id: true,
