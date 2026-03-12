@@ -41,6 +41,10 @@ prisma/prisma/dev.db*
 # local ffmpeg runtime
 tools/ffmpeg/
 
+# local IDE and runtime artifacts
+/.idea/
+/storage/
+
 # vercel
 .vercel
 
