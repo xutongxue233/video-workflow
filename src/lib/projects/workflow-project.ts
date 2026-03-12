@@ -3,6 +3,17 @@ import type { PrismaClient } from "@prisma/client";
 export const WORKFLOW_DEFAULT_TEAM_ID = "team_video_workflow_default";
 export const WORKFLOW_DEFAULT_TEAM_NAME = "Video Workflow";
 
+export async function ensureWorkflowTeamExists(prisma: PrismaClient): Promise<void> {
+  await prisma.team.upsert({
+    where: { id: WORKFLOW_DEFAULT_TEAM_ID },
+    update: {},
+    create: {
+      id: WORKFLOW_DEFAULT_TEAM_ID,
+      name: WORKFLOW_DEFAULT_TEAM_NAME,
+    },
+  });
+}
+
 export async function ensureWorkflowProjectExists(
   prisma: PrismaClient,
   projectId: string,
@@ -12,14 +23,7 @@ export async function ensureWorkflowProjectExists(
     throw new Error("projectId is required");
   }
 
-  await prisma.team.upsert({
-    where: { id: WORKFLOW_DEFAULT_TEAM_ID },
-    update: {},
-    create: {
-      id: WORKFLOW_DEFAULT_TEAM_ID,
-      name: WORKFLOW_DEFAULT_TEAM_NAME,
-    },
-  });
+  await ensureWorkflowTeamExists(prisma);
 
   await prisma.project.upsert({
     where: { id: normalizedProjectId },

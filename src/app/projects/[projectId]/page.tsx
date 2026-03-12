@@ -275,8 +275,8 @@ const TEXT: Record<Locale, Dict> = {
     completion: "流程完成度",
     uiLang: "界面语言",
     contentLang: "脚本输出语言",
-    projectIdLabel: "项目 ID",
-    projectIdHint: "同一个项目下的素材、脚本和渲染任务会按该 ID 归档。",
+    projectIdLabel: "项目切换",
+    projectIdHint: "项目 ID 由系统自动生成，可在下拉列表里切换已有项目。",
     progressTitle: "执行进度",
     progressHint: "按 1-3 顺序推进，减少返工。",
     quickLang: "快速切换",
@@ -365,8 +365,8 @@ const TEXT: Record<Locale, Dict> = {
     completion: "Workflow Completion",
     uiLang: "Interface Language",
     contentLang: "Script Output Language",
-    projectIdLabel: "Project ID",
-    projectIdHint: "Assets, scripts, and render jobs are grouped under this project ID.",
+    projectIdLabel: "Switch Project",
+    projectIdHint: "Project IDs are auto-generated. Use the list to switch between existing projects.",
     progressTitle: "Progress",
     progressHint: "Complete steps 1-3 in order.",
     quickLang: "Quick Switch",
@@ -543,7 +543,6 @@ export default function Home() {
   const [contentLanguage, setContentLanguage] = useState<Locale>("zh-CN");
 
   const projectId = routeProjectId;
-  const [projectIdDraft, setProjectIdDraft] = useState(routeProjectId);
 
   const [assetFile, setAssetFile] = useState<File | null>(null);
   const [assetUrl, setAssetUrl] = useState("");
@@ -943,7 +942,6 @@ export default function Home() {
       return;
     }
 
-    setProjectIdDraft(normalized);
     setAssetFile(null);
     setAssetUrl("");
     setScriptId("");
@@ -955,35 +953,6 @@ export default function Home() {
 
   function jumpTo(stepId: StepId) {
     document.getElementById(`stage-${stepId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  async function handleEnsureProject() {
-    const normalizedProjectId = projectIdDraft.trim();
-
-    if (!normalizedProjectId) {
-      return;
-    }
-
-    const response = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        projectId: normalizedProjectId,
-        name: normalizedProjectId,
-      }),
-    });
-
-    const data = toJsonRecord(await readJsonResponse(response));
-
-    if (!response.ok) {
-      setWorkspaceState({
-        loading: false,
-        result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
-      });
-      return;
-    }
-
-    switchProject(normalizedProjectId);
   }
 
   function toggleReferenceAsset(assetId: string) {
@@ -1244,21 +1213,13 @@ export default function Home() {
           </div>
 
           <div className="mt-5 grid gap-2 md:grid-cols-[180px_1fr] md:items-center">
-            <label htmlFor="projectId" className="text-sm font-semibold text-slate-700">
+            <label htmlFor="projectSelect" className="text-sm font-semibold text-slate-700">
               {dict.projectIdLabel}
             </label>
             <div className="space-y-2">
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input id="projectId" value={projectIdDraft} onChange={(event) => setProjectIdDraft(event.target.value)} className={inputClass} />
-                <button type="button" onClick={() => switchProject(projectIdDraft)} className={secondaryButtonClass}>
-                  {localize(locale, "切换项目", "Switch Project")}
-                </button>
-                <button type="button" onClick={handleEnsureProject} className={secondaryButtonClass}>
-                  {localize(locale, "创建/刷新项目", "Create/Refresh Project")}
-                </button>
-              </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <select
+                  id="projectSelect"
                   value={projectId}
                   onChange={(event) => switchProject(event.target.value)}
                   className={`${inputClass} sm:max-w-md`}
