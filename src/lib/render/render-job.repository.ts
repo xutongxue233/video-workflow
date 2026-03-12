@@ -296,7 +296,7 @@ export function createPrismaRenderJobRepository(
       height?: number;
       durationSeconds?: number;
     }): Promise<void> {
-      await ensureWorkflowProjectExists(prisma, input.projectId);
+      await ensureWorkflowProjectExists(prisma, input.projectId, { allowDeleted: true });
 
       await prisma.video.create({
         data: {

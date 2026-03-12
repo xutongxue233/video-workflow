@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const { renderJobFindFirst } = vi.hoisted(() => ({
+  renderJobFindFirst: vi.fn(),
+}));
+
 vi.mock("../../../../lib/render/render-job.repository", () => ({
   createPrismaRenderJobRepository: vi.fn(),
 }));
 
 vi.mock("../../../../lib/media/video-merge", () => ({
   mergeRemoteVideos: vi.fn(),
+}));
+
+vi.mock("../../../../lib/db/prisma", () => ({
+  prisma: {
+    renderJob: {
+      findFirst: renderJobFindFirst,
+    },
+  },
 }));
 
 import { createPrismaRenderJobRepository } from "../../../../lib/render/render-job.repository";
@@ -21,6 +33,8 @@ describe("/api/render-jobs/[id] route fallback merge", () => {
   });
 
   it("auto-merges storyboard video when all shots succeeded but final video is missing", async () => {
+    renderJobFindFirst.mockResolvedValue({ id: "job_1" });
+
     const findById = vi
       .fn()
       .mockResolvedValueOnce({

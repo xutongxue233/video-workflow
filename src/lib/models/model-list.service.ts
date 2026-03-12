@@ -32,7 +32,7 @@ function normalizeBaseUrl(baseURL: string): string {
 }
 
 async function fetchOpenAICompatibleModels(input: {
-  protocol: "openai" | "seedance";
+  protocol: "openai" | "seedance" | "seedream";
   baseURL: string;
   apiKey: string;
 }): Promise<ListedModel[]> {
@@ -88,7 +88,7 @@ export async function fetchProviderModelList(input: {
 }): Promise<ListedModel[]> {
   const baseURL = input.baseURL ?? getDefaultBaseUrlByProtocol(input.protocol);
 
-  if (input.protocol === "openai" || input.protocol === "seedance") {
+  if (input.protocol === "openai" || input.protocol === "seedance" || input.protocol === "seedream") {
     return fetchOpenAICompatibleModels({
       protocol: input.protocol,
       baseURL,

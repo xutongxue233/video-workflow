@@ -4,6 +4,7 @@ import {
   getSsrSafeInitialModelProviders,
   parseStoredModelProviders,
   resolveProviderModelId,
+  toRuntimeImageModelConfig,
   toRuntimeTextModelConfig,
   toRuntimeVideoModelConfig,
   type StoredModelProvider,
@@ -86,6 +87,27 @@ describe("model-settings local helpers", () => {
       baseURL: "https://generativelanguage.googleapis.com/v1beta",
       apiKey: "google-key",
       modelId: "models/veo-3.0-generate-preview",
+    });
+  });
+
+  it("builds runtime image model config for enabled image provider", () => {
+    const config = toRuntimeImageModelConfig({
+      id: "img_1",
+      name: "Seedream",
+      capability: "image",
+      protocol: "seedream",
+      baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "img-key",
+      enabled: true,
+      selectedModelId: "doubao-seedream-5.0-lite",
+      manualModelId: "",
+    });
+
+    expect(config).toEqual({
+      protocol: "seedream",
+      baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "img-key",
+      modelId: "doubao-seedream-5.0-lite",
     });
   });
 

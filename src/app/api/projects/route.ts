@@ -6,6 +6,7 @@ import {
   WORKFLOW_DEFAULT_TEAM_ID,
   ensureWorkflowProjectExists,
   ensureWorkflowTeamExists,
+  isDeletedProjectError,
 } from "@/lib/projects/workflow-project";
 
 const createProjectSchema = z
@@ -24,6 +25,10 @@ const createProjectSchema = z
     }
   });
 
+const deleteProjectSchema = z.object({
+  projectId: z.string().trim().min(1),
+});
+
 function parseLimit(raw: string | null, fallback = 30): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
@@ -39,7 +44,10 @@ export async function GET(request: Request) {
   const limit = parseLimit(url.searchParams.get("limit"), 30);
 
   const projects = await prisma.project.findMany({
-    where: projectId ? { id: projectId } : undefined,
+    where: {
+      deletedAt: null,
+      ...(projectId ? { id: projectId } : {}),
+    },
     orderBy: { updatedAt: "desc" },
     take: limit,
     select: {
@@ -113,6 +121,50 @@ export async function GET(request: Request) {
   );
 }
 
+export async function DELETE(request: Request) {
+  try {
+    const url = new URL(request.url);
+    const queryProjectId = url.searchParams.get("projectId")?.trim();
+    const parsed = deleteProjectSchema.parse(
+      queryProjectId ? { projectId: queryProjectId } : await request.json(),
+    );
+
+    const result = await prisma.project.updateMany({
+      where: {
+        id: parsed.projectId,
+        deletedAt: null,
+      },
+      data: {
+        deletedAt: new Date(),
+      },
+    });
+
+    if (result.count === 0) {
+      return NextResponse.json({ message: "project not found" }, { status: 404 });
+    }
+
+    return NextResponse.json(
+      {
+        projectId: parsed.projectId,
+        deleted: true,
+      },
+      { status: 200 },
+    );
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        {
+          message: "invalid delete payload",
+          issues: error.issues,
+        },
+        { status: 400 },
+      );
+    }
+
+    return NextResponse.json({ message: "failed to delete project" }, { status: 500 });
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = createProjectSchema.parse(await request.json());
@@ -163,6 +215,10 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    if (isDeletedProjectError(error)) {
+      return NextResponse.json({ message: "project has been deleted" }, { status: 404 });
     }
 
     return NextResponse.json({ message: "failed to create project" }, { status: 500 });

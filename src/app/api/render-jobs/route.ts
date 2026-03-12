@@ -6,6 +6,7 @@ import { parseStoryboardProgress } from "@/lib/render/storyboard-progress";
 import { createBullMQRenderQueuePort } from "@/lib/render/render-job.queue";
 import { createPrismaRenderJobRepository } from "@/lib/render/render-job.repository";
 import { createRenderJobService } from "@/lib/render/render-job.service";
+import { isDeletedProjectError } from "../../../lib/projects/workflow-project";
 
 function parseReferenceAssetsJson(raw: string | null) {
   if (!raw) {
@@ -68,7 +69,12 @@ export async function GET(request: Request) {
   const limit = parseLimit(url.searchParams.get("limit"), 40);
 
   const items = await prisma.renderJob.findMany({
-    where: projectId ? { projectId } : undefined,
+    where: {
+      ...(projectId ? { projectId } : {}),
+      project: {
+        deletedAt: null,
+      },
+    },
     orderBy: { updatedAt: "desc" },
     take: limit,
     select: {
@@ -140,6 +146,10 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    if (isDeletedProjectError(error)) {
+      return NextResponse.json({ message: "project has been deleted" }, { status: 404 });
     }
 
     return NextResponse.json(

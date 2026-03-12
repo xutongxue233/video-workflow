@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 
 import { createPrismaScriptRepository, createScriptService } from "../../../lib/scripts/script.service";
 import { prisma } from "../../../lib/db/prisma";
+import { isDeletedProjectError } from "../../../lib/projects/workflow-project";
 
 const scriptService = createScriptService({
   repository: createPrismaScriptRepository(prisma),
@@ -23,7 +24,12 @@ export async function GET(request: Request) {
   const limit = parseLimit(url.searchParams.get("limit"), 40);
 
   const items = await prisma.script.findMany({
-    where: projectId ? { projectId } : undefined,
+    where: {
+      ...(projectId ? { projectId } : {}),
+      project: {
+        deletedAt: null,
+      },
+    },
     orderBy: { updatedAt: "desc" },
     take: limit,
     select: {
@@ -58,6 +64,10 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    if (isDeletedProjectError(error)) {
+      return NextResponse.json({ message: "project has been deleted" }, { status: 404 });
     }
 
     return NextResponse.json({ message: "failed to create script" }, { status: 500 });

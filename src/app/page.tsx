@@ -41,6 +41,8 @@ type Dict = {
   cardsHint: string;
   projectCount: (count: number) => string;
   open: string;
+  delete: string;
+  deleting: string;
   updated: string;
   assets: string;
   scripts: string;
@@ -74,6 +76,8 @@ const TEXT: Record<Locale, Dict> = {
     cardsHint: "点击项目卡片进入工作台，或使用“新增项目”卡片快速创建。",
     projectCount: (count) => `${count} 个项目`,
     open: "进入项目",
+    delete: "删除",
+    deleting: "删除中...",
     updated: "更新时间",
     assets: "素材",
     scripts: "脚本",
@@ -105,6 +109,8 @@ const TEXT: Record<Locale, Dict> = {
     cardsHint: "Open any project card, or use the add card to create one quickly.",
     projectCount: (count) => `${count} Project${count === 1 ? "" : "s"}`,
     open: "Open Project",
+    delete: "Delete",
+    deleting: "Deleting...",
     updated: "Updated",
     assets: "Assets",
     scripts: "Scripts",
@@ -149,6 +155,7 @@ export default function Home() {
   const [isCreateCardOpen, setIsCreateCardOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [deletingProjectId, setDeletingProjectId] = useState("");
   const [message, setMessage] = useState("");
 
   const dict = TEXT[locale];
@@ -276,6 +283,51 @@ export default function Home() {
     setDraftProjectTitle("");
     setDraftProjectDescription("");
     setMessage("");
+  }
+
+  async function handleDeleteProject(project: ProjectSummaryItem) {
+    const projectLabel = project.name || project.id;
+    const confirmed = window.confirm(
+      locale === "zh-CN"
+        ? `确认删除项目「${projectLabel}」？删除后项目会从界面隐藏，后台任务可能继续执行。`
+        : `Delete project "${projectLabel}"? It will be hidden from the UI, while background jobs may still continue.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingProjectId(project.id);
+
+    try {
+      const response = await fetch(`/api/projects?projectId=${encodeURIComponent(project.id)}`, {
+        method: "DELETE",
+      });
+      const data = toJsonRecord(await readJsonResponse(response));
+
+      if (!response.ok) {
+        setMessage(`${dict.errorPrefix} ${response.status}\n${JSON.stringify(data, null, 2)}`);
+        return;
+      }
+
+      setProjects((prev) => prev.filter((item) => item.id !== project.id));
+      setMessage(
+        locale === "zh-CN"
+          ? `已删除项目 ${projectLabel}。`
+          : `Deleted project ${projectLabel}.`,
+      );
+      await refreshProjects();
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? `${locale === "zh-CN" ? "删除失败" : "Delete failed"}: ${error.message}`
+          : locale === "zh-CN"
+            ? "删除失败"
+            : "Delete failed",
+      );
+    } finally {
+      setDeletingProjectId("");
+    }
   }
 
   return (
@@ -461,12 +513,22 @@ export default function Home() {
                   </div>
                 </div>
 
-                <Link
-                  href={buildProjectDetailPath(project.id)}
-                  className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-xl bg-slate-900 px-3 text-sm font-semibold text-white transition hover:bg-teal-700"
-                >
-                  {dict.open}
-                </Link>
+                <div className="mt-4 flex gap-2">
+                  <Link
+                    href={buildProjectDetailPath(project.id)}
+                    className="inline-flex h-10 flex-1 items-center justify-center rounded-xl bg-slate-900 px-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+                  >
+                    {dict.open}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteProject(project)}
+                    disabled={deletingProjectId === project.id}
+                    className="inline-flex h-10 min-w-[88px] cursor-pointer items-center justify-center rounded-xl border border-rose-300 bg-rose-50 px-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-55"
+                  >
+                    {deletingProjectId === project.id ? dict.deleting : dict.delete}
+                  </button>
+                </div>
               </article>
             ))}
           </div>

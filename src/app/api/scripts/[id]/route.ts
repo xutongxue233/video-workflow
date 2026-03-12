@@ -13,6 +13,20 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
+  const visibleScript = await prisma.script.findFirst({
+    where: {
+      id,
+      project: {
+        deletedAt: null,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (!visibleScript) {
+    return NextResponse.json({ message: "script not found" }, { status: 404 });
+  }
+
   const script = await scriptService.getById(id);
 
   if (!script) {
@@ -27,6 +41,19 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
+  const visibleScript = await prisma.script.findFirst({
+    where: {
+      id,
+      project: {
+        deletedAt: null,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (!visibleScript) {
+    return NextResponse.json({ message: "script not found" }, { status: 404 });
+  }
 
   try {
     const body = await request.json();

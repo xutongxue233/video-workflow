@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { prisma as defaultPrisma } from "../db/prisma";
 import { ensureWorkflowProjectExists } from "../projects/workflow-project";
+import { REFERENCE_ASSET_SELECTION_LIMIT } from "../reference-assets.constants";
 import type { OpenAICompatibleChatClient } from "./openai-compatible.client";
 
 const generationInputSchema = z.object({
@@ -23,7 +24,7 @@ const generationInputSchema = z.object({
         url: z.string().min(1),
       }),
     )
-    .max(8)
+    .max(REFERENCE_ASSET_SELECTION_LIMIT)
     .default([]),
 });
 

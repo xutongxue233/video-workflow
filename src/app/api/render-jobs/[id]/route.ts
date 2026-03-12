@@ -198,6 +198,20 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
+  const visibleJob = await prisma.renderJob.findFirst({
+    where: {
+      id,
+      project: {
+        deletedAt: null,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (!visibleJob) {
+    return NextResponse.json({ message: "Render job not found" }, { status: 404 });
+  }
+
   const repository = createPrismaRenderJobRepository(prisma);
   const job = await repository.findById(id);
 

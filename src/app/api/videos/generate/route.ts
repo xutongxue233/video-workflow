@@ -5,6 +5,8 @@ import { prisma } from "../../../../lib/db/prisma";
 import { createBullMQRenderQueuePort } from "../../../../lib/render/render-job.queue";
 import { createPrismaRenderJobRepository } from "../../../../lib/render/render-job.repository";
 import { createRenderJobService } from "../../../../lib/render/render-job.service";
+import { isDeletedProjectError } from "../../../../lib/projects/workflow-project";
+import { REFERENCE_ASSET_SELECTION_LIMIT } from "../../../../lib/reference-assets.constants";
 
 const requestSchema = z.object({
   projectId: z.string().min(1),
@@ -14,7 +16,7 @@ const requestSchema = z.object({
   durationSec: z.number().int().min(-1).max(60).optional(),
   firstFrameUrl: z.string().url().optional(),
   lastFrameUrl: z.string().url().optional(),
-  referenceImageUrls: z.array(z.string().url()).max(8).optional(),
+  referenceImageUrls: z.array(z.string().url()).max(REFERENCE_ASSET_SELECTION_LIMIT).optional(),
   referenceAssets: z.array(
     z.object({
       id: z.string().min(1),
@@ -22,7 +24,7 @@ const requestSchema = z.object({
       fileName: z.string().min(1).nullable().optional(),
       url: z.string().url(),
     }),
-  ).max(8).optional(),
+  ).max(REFERENCE_ASSET_SELECTION_LIMIT).optional(),
   requestNonce: z.string().optional(),
   templateId: z.string().min(1).optional(),
   selectedVideoModel: z
@@ -97,6 +99,10 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    if (isDeletedProjectError(error)) {
+      return NextResponse.json({ message: "project has been deleted" }, { status: 404 });
     }
 
     return NextResponse.json({ message: "failed to queue video generation" }, { status: 500 });

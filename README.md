@@ -1,37 +1,37 @@
 # video-workflow
 
-MVP skeleton for a 3D printing promo video generation platform.
+Workflow app for short-video production:
+
+1. Generate material images from a prototype image (Seedream i2i).
+2. Manage and apply prompt templates.
+3. Generate and edit scripts.
+4. Queue video jobs and track render status.
 
 ## Stack
 
 - Next.js 16 + TypeScript
 - Prisma + SQLite
 - Redis + BullMQ
-- Vitest
-- Zod
+- Zod + Vitest
 
 ## Local Setup
 
-1. Install dependencies:
+1. Install dependencies.
 
 ```bash
 npm install
 ```
 
-2. Copy env file:
+2. Create local env file (`.env`) from `.env.example`.
+
+3. Run database migration and Prisma client generation.
 
 ```bash
-cp .env.example .env
+npx prisma migrate dev
+npx prisma generate
 ```
 
-3. Create and apply database migrations:
-
-```bash
-npx prisma migrate dev --skip-seed
-npm run db:generate
-```
-
-4. Start Redis locally (example with Docker):
+4. Start Redis (example with Docker).
 
 ```bash
 docker run --name video-workflow-redis -p 6379:6379 -d redis:7
@@ -39,168 +39,85 @@ docker run --name video-workflow-redis -p 6379:6379 -d redis:7
 
 ## Environment Variables
 
-Required for core runtime:
+Core:
 
-- `DATABASE_URL` (SQLite path)
+- `DATABASE_URL`
 - `REDIS_URL`
 - `LOCAL_STORAGE_ROOT`
 
-Required for AI script generation (OpenAI-compatible endpoint):
+Text script generation:
 
 - `OPENAI_COMPAT_BASE_URL`
 - `OPENAI_COMPAT_API_KEY`
 - `OPENAI_SCRIPT_MODEL`
 
-Required for SeaDance video generation:
+Image generation (Seedream):
+
+- `SEEDREAM_BASE_URL` (recommended `https://ark.cn-beijing.volces.com/api/v3`)
+- `SEEDREAM_API_KEY`
+- `SEEDREAM_IMAGE_MODEL` (recommended `doubao-seedream-5.0-lite`)
+
+Video generation (SeaDance):
 
 - `SEADANCE_BASE_URL`
 - `SEADANCE_API_KEY`
 - `SEADANCE_VIDEO_MODEL`
 
-Optional when using dynamic runtime provider selection in settings:
+Worker tuning:
 
-- `VIDEO_POLL_INTERVAL_MS` (fallbacks to `SEADANCE_POLL_INTERVAL_MS`)
-- `VIDEO_POLL_TIMEOUT_MS` (fallbacks to `SEADANCE_POLL_TIMEOUT_MS`)
+- `VIDEO_POLL_INTERVAL_MS`
+- `VIDEO_POLL_TIMEOUT_MS`
+- `SEADANCE_POLL_INTERVAL_MS`
+- `SEADANCE_POLL_TIMEOUT_MS`
+- `RENDER_WORKER_CONCURRENCY`
+- `DISABLE_RENDER_WORKER_AUTO_START`
+- `FFMPEG_PATH` (optional; empty means using bundled `vendor/ffmpeg` binary first, then fallback to `ffmpeg-static`)
 
-Optional worker tuning:
+Bundled FFmpeg:
 
-- `SEADANCE_POLL_INTERVAL_MS` (default `2000`)
-- `SEADANCE_POLL_TIMEOUT_MS` (default `120000`)
-- `RENDER_WORKER_CONCURRENCY` (default `1`)
-- `DISABLE_RENDER_WORKER_AUTO_START` (set `true` in test/dev scenarios where you do not want auto start)
+- Windows x64 binary is committed at `vendor/ffmpeg/win32-x64/ffmpeg.exe`.
+- License and build metadata are kept in:
+  - `vendor/ffmpeg/win32-x64/ffmpeg.exe.LICENSE`
+  - `vendor/ffmpeg/win32-x64/ffmpeg.exe.README`
 
 ## Run
 
-One-command dev startup (frontend + worker only):
+Start web + worker together:
 
 ```bash
 npm run dev:all
 ```
 
-This command starts `npm run worker` and `npm run dev` together via a Node script (`scripts/dev-all.mjs`). It does not install dependencies, run migrations, or start Redis.
-
-Start web app:
+Run separately:
 
 ```bash
 npm run dev
-```
-
-Start render worker (new terminal):
-
-```bash
 npm run worker
 ```
 
-## Tests and Quality
+## Main Pages
+
+- `/projects/[projectId]`: full workflow page (materials, scripts, render jobs)
+- `/settings`: model provider configuration
+
+## Main API Routes
+
+- `POST /api/images/generate`: prototype image + references -> generated material assets
+- `GET/POST/DELETE /api/prompt-templates`: prompt template management
+- `POST /api/ai/scripts/generate`: script generation
+- `POST /api/videos/generate`: queue video generation
+- `GET /api/render-jobs/[id]`: render status
+- `POST /api/render-jobs/[id]/retry`: retry unfinished shots
+
+## Model Selection Rules
+
+- Video providers using `seedance` should use SeaDance series models.
+- Image providers use Seedream/SeedEdit series models.
+
+## Quality Checks
 
 ```bash
-npm run test
 npm run lint
+npm run test
 npm run build
 ```
-
-## Current Scope
-
-Implemented in Stage 1 + Stage 2 + OpenAI/SeaDance generation chain:
-
-- Render job domain validation and idempotency key generation
-- BullMQ queue setup and enqueue abstraction
-- Prisma schema for users, teams, projects, assets, scripts, render jobs, and videos
-- Render job service + repository with provider/external status fields
-- Local storage adapter for generated/media files
-- Script create/update service
-- OpenAI-compatible script/storyboard generation service
-- SeaDance async video generation service (create job + polling)
-- Render worker integration for SeaDance external jobs and video record write-back
-- TTS provider abstraction with mock provider
-- API routes:
-  - `GET /api/files/[...storageKey]`
-  - `POST /api/assets`
-  - `POST /api/scripts`
-  - `GET /api/scripts/[id]`
-  - `PATCH /api/scripts/[id]`
-  - `POST /api/ai/scripts/generate`
-  - `POST /api/videos/generate`
-  - `POST /api/tts`
-  - `POST /api/render-jobs`
-  - `GET /api/render-jobs/[id]`
-- Home page (`/`) workbench for upload, script generation/editing, TTS, and video queue actions
-- Settings page (`/settings`) for local model provider configuration (text/image/video)
-- Model discovery endpoint: `POST /model/list`
-
-## API Examples
-
-Generate script and storyboard (OpenAI-compatible):
-
-```bash
-curl -X POST http://localhost:3000/api/ai/scripts/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "projectId": "proj_123",
-    "productName": "Miniature Dragon",
-    "sellingPoints": ["high detail", "easy support removal"],
-    "targetAudience": "tabletop gamers",
-    "tone": "energetic",
-    "durationSec": 30
-  }'
-```
-
-Update script text/storyboard fields:
-
-```bash
-curl -X PATCH http://localhost:3000/api/scripts/scr_123 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "hook": "Print faster with better detail",
-    "storyboard": "1. Model reveal | Crisp details | Dolly in",
-    "cta": "Try it now"
-  }'
-```
-
-Queue SeaDance video generation:
-
-```bash
-curl -X POST http://localhost:3000/api/videos/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "projectId": "proj_123",
-    "scriptId": "scr_123",
-    "aspectRatio": "9:16",
-    "voiceStyle": "energetic"
-  }'
-```
-
-Discover provider model list:
-
-```bash
-curl -X POST http://localhost:3000/model/list \
-  -H "Content-Type: application/json" \
-  -d '{
-    "protocol": "openai",
-    "baseURL": "https://api.openai.com/v1",
-    "apiKey": "sk-..."
-  }'
-```
-
-Generate TTS voiceover:
-
-```bash
-curl -X POST http://localhost:3000/api/tts \
-  -H "Content-Type: application/json" \
-  -d '{
-    "scriptText": "Meet the easiest way to showcase your 3D model.",
-    "voiceStyle": "energetic"
-  }'
-```
-
-Fetch stored file (example):
-
-```bash
-curl http://localhost:3000/api/files/assets/example.png --output example.png
-```
-
-## Notes
-
-- SQLite is intentionally used for MVP speed. For scaling, migrate to PostgreSQL.
-- `src/lib/tts/providers/mock-tts.provider.ts` is a development placeholder and should be replaced in production.
-- Model provider API keys configured in `/settings` are stored in browser local storage and not persisted in Prisma tables.

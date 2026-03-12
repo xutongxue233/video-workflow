@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { projectCreate, projectUpdate, projectUpsert } = vi.hoisted(() => ({
+const { projectCreate, projectUpdate, projectUpsert, projectFindMany, projectUpdateMany } = vi.hoisted(() => ({
   projectCreate: vi.fn(),
   projectUpdate: vi.fn(),
   projectUpsert: vi.fn(),
+  projectFindMany: vi.fn(),
+  projectUpdateMany: vi.fn(),
 }));
 const { ensureWorkflowProjectExists, ensureWorkflowTeamExists, WORKFLOW_DEFAULT_TEAM_ID } = vi.hoisted(() => ({
   ensureWorkflowProjectExists: vi.fn(),
@@ -17,6 +19,8 @@ vi.mock("@/lib/db/prisma", () => ({
       create: projectCreate,
       update: projectUpdate,
       upsert: projectUpsert,
+      findMany: projectFindMany,
+      updateMany: projectUpdateMany,
     },
   },
 }));
@@ -26,11 +30,51 @@ vi.mock("@/lib/projects/workflow-project", () => ({
   WORKFLOW_DEFAULT_TEAM_ID,
 }));
 
-import { POST } from "./route";
+import { DELETE, GET, POST } from "./route";
 
 describe("/api/projects route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("lists only active projects", async () => {
+    const updatedAt = new Date("2026-03-12T10:00:00.000Z");
+    projectFindMany.mockResolvedValue([
+      {
+        id: "proj_active",
+        name: "Active",
+        description: null,
+        updatedAt,
+        _count: {
+          assets: 0,
+          scripts: 0,
+          renderJobs: 0,
+          videos: 0,
+        },
+        assets: [],
+        scripts: [],
+        renderJobs: [],
+      },
+    ]);
+
+    const request = new Request("http://localhost/api/projects?limit=20", {
+      method: "GET",
+    });
+
+    const response = await GET(request);
+    const json = (await response.json()) as {
+      items: Array<{ id: string }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(projectFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          deletedAt: null,
+        },
+      }),
+    );
+    expect(json.items.map((item) => item.id)).toEqual(["proj_active"]);
   });
 
   it("creates a project with generated id when only title is provided", async () => {
@@ -111,6 +155,35 @@ describe("/api/projects route", () => {
         description: true,
         updatedAt: true,
       },
+    });
+  });
+
+  it("soft deletes project by projectId", async () => {
+    projectUpdateMany.mockResolvedValue({ count: 1 });
+
+    const request = new Request("http://localhost/api/projects?projectId=proj_alpha", {
+      method: "DELETE",
+    });
+
+    const response = await DELETE(request);
+    const json = (await response.json()) as {
+      projectId: string;
+      deleted: boolean;
+    };
+
+    expect(response.status).toBe(200);
+    expect(projectUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "proj_alpha",
+        deletedAt: null,
+      },
+      data: {
+        deletedAt: expect.any(Date),
+      },
+    });
+    expect(json).toEqual({
+      projectId: "proj_alpha",
+      deleted: true,
     });
   });
 });

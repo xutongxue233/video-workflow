@@ -12,6 +12,7 @@ export type ProjectScopedConfig = {
   voiceStyle: string;
   renderAspectRatio: "9:16" | "16:9";
   selectedTextProviderId: string;
+  selectedImageProviderId: string;
   selectedVideoProviderId: string;
   selectedReferenceAssetIds: string[];
 };
@@ -53,6 +54,7 @@ export function loadProjectScopedConfig(storage: Storage, projectId: string): Pr
       voiceStyle: config.voiceStyle ?? "energetic",
       renderAspectRatio: config.renderAspectRatio === "16:9" ? "16:9" : "9:16",
       selectedTextProviderId: config.selectedTextProviderId ?? "",
+      selectedImageProviderId: config.selectedImageProviderId ?? "",
       selectedVideoProviderId: config.selectedVideoProviderId ?? "",
       selectedReferenceAssetIds: Array.isArray(config.selectedReferenceAssetIds)
         ? config.selectedReferenceAssetIds.filter((item) => typeof item === "string")

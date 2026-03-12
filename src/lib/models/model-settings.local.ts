@@ -42,6 +42,13 @@ export type RuntimeVideoModelConfig = {
   modelId: string;
 };
 
+export type RuntimeImageModelConfig = {
+  protocol: "seedream" | "openai";
+  baseURL: string;
+  apiKey: string;
+  modelId: string;
+};
+
 export function parseStoredModelProviders(raw: unknown): StoredModelProvider[] {
   const array = Array.isArray(raw) ? raw : [];
 
@@ -120,6 +127,30 @@ export function toRuntimeVideoModelConfig(
   }
 
   if (provider.protocol !== "seedance" && provider.protocol !== "google") {
+    return null;
+  }
+
+  const modelId = resolveProviderModelId(provider);
+  if (!modelId || !provider.apiKey.trim() || !provider.baseURL.trim()) {
+    return null;
+  }
+
+  return {
+    protocol: provider.protocol,
+    baseURL: provider.baseURL,
+    apiKey: provider.apiKey,
+    modelId,
+  };
+}
+
+export function toRuntimeImageModelConfig(
+  provider: StoredModelProvider,
+): RuntimeImageModelConfig | null {
+  if (!provider.enabled || provider.capability !== "image") {
+    return null;
+  }
+
+  if (provider.protocol !== "openai" && provider.protocol !== "seedream") {
     return null;
   }
 

@@ -18,10 +18,12 @@ type AssetRecord = {
   fileName: string | null;
   storageKey: string;
   url: string;
+  createdAt: string;
 };
 
 type AssetRepository = {
   createAsset(input: CreateAssetRecordInput): Promise<AssetRecord>;
+  softDeleteAsset(input: { assetId: string; projectId?: string }): Promise<boolean>;
 };
 
 type AssetService = {
@@ -30,6 +32,10 @@ type AssetService = {
     fileName: string;
     content: Buffer;
   }): Promise<AssetRecord>;
+  deleteImageAsset(input: {
+    assetId: string;
+    projectId?: string;
+  }): Promise<boolean>;
 };
 
 export function createAssetService(deps: {
@@ -53,6 +59,17 @@ export function createAssetService(deps: {
         fileName: input.fileName,
         storageKey: stored.storageKey,
         url: `/api/files/${stored.storageKey}`,
+      });
+    },
+
+    async deleteImageAsset(input) {
+      if (!input.assetId.trim()) {
+        throw new Error("assetId is required");
+      }
+
+      return deps.repository.softDeleteAsset({
+        assetId: input.assetId.trim(),
+        projectId: input.projectId?.trim() || undefined,
       });
     },
   };
@@ -81,7 +98,22 @@ export function createPrismaAssetRepository(
         fileName: record.fileName,
         storageKey: record.storageKey,
         url: record.url,
+        createdAt: record.createdAt.toISOString(),
       };
+    },
+
+    async softDeleteAsset(input) {
+      const result = await prisma.asset.deleteMany({
+        where: {
+          id: input.assetId,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          project: {
+            deletedAt: null,
+          },
+        },
+      });
+
+      return result.count > 0;
     },
   };
 }

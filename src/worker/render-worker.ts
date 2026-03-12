@@ -14,6 +14,7 @@ import {
   type StoryboardProgress,
 } from "../lib/render/storyboard-progress";
 import type { RenderPayload } from "../lib/render/render-job.types";
+import { REFERENCE_ASSET_SELECTION_LIMIT } from "../lib/reference-assets.constants";
 import {
   createGoogleCompatibleVideoClient,
   createGoogleVideoService,
@@ -161,7 +162,9 @@ function toSeedanceImageInputs(payload: RenderPayload): SeaDanceImageInput[] {
       ? payload.lastFrameUrl
       : undefined;
   const referenceImageUrls = Array.isArray(payload.referenceImageUrls)
-    ? payload.referenceImageUrls.filter((item) => typeof item === "string" && item.trim().length > 0).slice(0, 8)
+    ? payload.referenceImageUrls
+      .filter((item) => typeof item === "string" && item.trim().length > 0)
+      .slice(0, REFERENCE_ASSET_SELECTION_LIMIT)
     : [];
 
   if (firstFrameUrl && lastFrameUrl) {
@@ -401,7 +404,9 @@ export function createRenderJobProcessor(deps: {
           ? Math.floor(input.data.durationSec)
           : undefined;
       const referenceImageUrls = Array.isArray(input.data.referenceImageUrls)
-        ? input.data.referenceImageUrls.filter((item) => typeof item === "string" && item.trim().length > 0).slice(0, 8)
+        ? input.data.referenceImageUrls
+          .filter((item) => typeof item === "string" && item.trim().length > 0)
+          .slice(0, REFERENCE_ASSET_SELECTION_LIMIT)
         : [];
       const seedanceImageInputs = isSeedancePayload(input.data) ? toSeedanceImageInputs(input.data) : undefined;
       const storyboard = parseStoryboardSpec(structuredJson);

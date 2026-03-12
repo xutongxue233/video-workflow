@@ -21,6 +21,38 @@ type ListedModel = {
   label: string;
 };
 
+const SEEDANCE_MODEL_PATTERN = /seedance|seadance/i;
+const SEEDREAM_MODEL_PATTERN = /seedream|seededit/i;
+
+function getProviderDefaultBaseURL(capability: ModelCapability, protocol: ModelProtocol): string {
+  if (capability === "image" && (protocol === "openai" || protocol === "seedream")) {
+    return "https://ark.cn-beijing.volces.com/api/v3";
+  }
+  return getDefaultBaseUrlByProtocol(protocol);
+}
+
+function getBuiltinSeedreamModels(): ListedModel[] {
+  return [
+    { id: "doubao-seedream-5.0-lite", label: "doubao-seedream-5.0-lite" },
+    { id: "doubao-seedream-4.5", label: "doubao-seedream-4.5" },
+    { id: "doubao-seedream-4.0", label: "doubao-seedream-4.0" },
+    { id: "doubao-seedream-3.0-t2i", label: "doubao-seedream-3.0-t2i" },
+    { id: "doubao-seededit-3.0-i2i", label: "doubao-seededit-3.0-i2i" },
+  ];
+}
+
+function filterModelsByProvider(provider: StoredModelProvider, models: ListedModel[]): ListedModel[] {
+  if (provider.capability === "video" && provider.protocol === "seedance") {
+    return models.filter((item) => SEEDANCE_MODEL_PATTERN.test(item.id) || SEEDANCE_MODEL_PATTERN.test(item.label));
+  }
+
+  if (provider.capability === "image") {
+    return models.filter((item) => SEEDREAM_MODEL_PATTERN.test(item.id) || SEEDREAM_MODEL_PATTERN.test(item.label));
+  }
+
+  return models;
+}
+
 function createProviderId(): string {
   return `mdl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -44,6 +76,9 @@ function protocolLabel(protocol: ModelProtocol): string {
   }
   if (protocol === "seedance") {
     return "字节 Seedance 协议";
+  }
+  if (protocol === "seedream") {
+    return "字节 Seedream 协议";
   }
   return "Google 协议";
 }
@@ -133,24 +168,45 @@ export default function ModelSettingsPage() {
       if (!response.ok || !Array.isArray(parsed.models)) {
         throw new Error(parsed.message ?? `HTTP ${response.status}`);
       }
-      const models = parsed.models;
+      const rawModels = parsed.models;
+      const models = filterModelsByProvider(provider, rawModels);
+      const effectiveModels =
+        provider.capability === "image" && models.length === 0
+          ? getBuiltinSeedreamModels()
+          : models;
 
-      setModelsByProvider((prev) => ({ ...prev, [provider.id]: models }));
+      setModelsByProvider((prev) => ({ ...prev, [provider.id]: effectiveModels }));
       setMessageByProvider((prev) => ({
         ...prev,
         [provider.id]:
-          models.length > 0
-            ? `已获取 ${models.length} 个模型。`
+          effectiveModels.length > 0
+            ? `已获取 ${effectiveModels.length} 个模型。`
             : "未拉取到可用模型，请手动填写 model_id。",
       }));
 
-      if (!provider.selectedModelId && models[0]?.id) {
+      if (!provider.selectedModelId && effectiveModels[0]?.id) {
         updateProvider(provider.id, (item) => ({
           ...item,
-          selectedModelId: models[0]?.id ?? "",
+          selectedModelId: effectiveModels[0]?.id ?? "",
         }));
       }
     } catch (error) {
+      if (provider.capability === "image") {
+        const builtin = getBuiltinSeedreamModels();
+        setModelsByProvider((prev) => ({ ...prev, [provider.id]: builtin }));
+        setMessageByProvider((prev) => ({
+          ...prev,
+          [provider.id]: "模型列表接口不可用，已切换为内置 Seedream 模型列表。",
+        }));
+        if (!provider.selectedModelId && builtin[0]?.id) {
+          updateProvider(provider.id, (item) => ({
+            ...item,
+            selectedModelId: builtin[0]?.id ?? "",
+          }));
+        }
+        return;
+      }
+
       const message = error instanceof Error ? error.message : "模型列表拉取失败，请手动填写 model_id。";
       setMessageByProvider((prev) => ({
         ...prev,
@@ -279,7 +335,7 @@ export default function ModelSettingsPage() {
                           ...item,
                           capability: nextCapability,
                           protocol: nextProtocol,
-                          baseURL: getDefaultBaseUrlByProtocol(nextProtocol),
+                          baseURL: getProviderDefaultBaseURL(nextCapability, nextProtocol),
                           selectedModelId: "",
                           manualModelId: "",
                         }));
@@ -301,7 +357,7 @@ export default function ModelSettingsPage() {
                         updateProvider(provider.id, (item) => ({
                           ...item,
                           protocol: nextProtocol,
-                          baseURL: getDefaultBaseUrlByProtocol(nextProtocol),
+                          baseURL: getProviderDefaultBaseURL(item.capability, nextProtocol),
                           selectedModelId: "",
                         }));
                       }}
@@ -401,7 +457,11 @@ export default function ModelSettingsPage() {
                           manualModelId: event.target.value,
                         }))
                       }
-                      placeholder="例如：gpt-4.1-mini / models/gemini-2.5-flash / seadance-v1"
+                      placeholder={
+                        provider.capability === "image"
+                          ? "例如：doubao-seedream-5.0-lite"
+                          : "例如：gpt-4.1-mini / models/gemini-2.5-flash / doubao-seedance-1-5-pro-251215"
+                      }
                       className={inputClass}
                     />
                   </label>

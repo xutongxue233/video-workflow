@@ -191,4 +191,41 @@ describe("render-job domain", () => {
       }),
     ).toThrow("referenceAssets");
   });
+
+  it("accepts up to 24 reference assets", () => {
+    const payload = buildRenderPayload({
+      projectId: "proj_1",
+      templateId: "tpl_a",
+      scriptId: "scr_1",
+      voiceStyle: "energetic",
+      aspectRatio: "9:16",
+      referenceAssets: Array.from({ length: 24 }, (_, index) => ({
+        id: `asset_${index + 1}`,
+        projectId: "proj_1",
+        fileName: `ref-${index + 1}.png`,
+        url: `https://img.example.com/ref-${index + 1}.png`,
+      })),
+    });
+
+    expect(payload.referenceAssets).toHaveLength(24);
+    expect(payload.referenceImageUrls).toHaveLength(24);
+  });
+
+  it("rejects more than 24 reference assets", () => {
+    expect(() =>
+      buildRenderPayload({
+        projectId: "proj_1",
+        templateId: "tpl_a",
+        scriptId: "scr_1",
+        voiceStyle: "energetic",
+        aspectRatio: "9:16",
+        referenceAssets: Array.from({ length: 25 }, (_, index) => ({
+          id: `asset_${index + 1}`,
+          projectId: "proj_1",
+          fileName: `ref-${index + 1}.png`,
+          url: `https://img.example.com/ref-${index + 1}.png`,
+        })),
+      }),
+    ).toThrow("referenceAssets");
+  });
 });
