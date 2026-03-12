@@ -2,6 +2,7 @@ import { type PrismaClient, RenderJobStatus } from "@prisma/client";
 
 import { prisma as defaultPrisma } from "../db/prisma";
 import { ensureWorkflowProjectExists } from "../projects/workflow-project";
+import type { RenderReferenceAsset } from "./render-job.types";
 
 import type {
   CreateQueuedJobInput,
@@ -24,6 +25,7 @@ function mapRecord(record: {
   status: RenderJobStatus;
   idempotencyKey: string;
   errorMessage: string | null;
+  referenceAssetsJson: string | null;
   video?: {
     url: string;
   } | null;
@@ -43,7 +45,55 @@ function mapRecord(record: {
     idempotencyKey: record.idempotencyKey,
     errorMessage: record.errorMessage,
     videoUrl: record.video?.url ?? null,
+    referenceAssets: parseReferenceAssetsJson(record.referenceAssetsJson),
   };
+}
+
+function parseReferenceAssetsJson(raw: string | null): RenderReferenceAsset[] {
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const normalized: RenderReferenceAsset[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        continue;
+      }
+
+      const candidate = item as Record<string, unknown>;
+      const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+      const projectId = typeof candidate.projectId === "string" ? candidate.projectId.trim() : "";
+      const url = typeof candidate.url === "string" ? candidate.url.trim() : "";
+      const fileNameRaw = candidate.fileName;
+      const fileName =
+        typeof fileNameRaw === "string"
+          ? fileNameRaw
+          : fileNameRaw == null
+            ? null
+            : String(fileNameRaw);
+
+      if (!id || !projectId || !url) {
+        continue;
+      }
+
+      normalized.push({
+        id,
+        projectId,
+        fileName,
+        url,
+      });
+    }
+
+    return normalized;
+  } catch {
+    return [];
+  }
 }
 
 function isIdempotencyUniqueConstraintError(error: unknown): boolean {
@@ -105,6 +155,10 @@ export function createPrismaRenderJobRepository(
             provider: input.provider,
             status: RenderJobStatus.QUEUED,
             idempotencyKey: input.idempotencyKey,
+            referenceAssetsJson:
+              input.referenceAssets && input.referenceAssets.length > 0
+                ? JSON.stringify(input.referenceAssets)
+                : null,
           },
         });
 

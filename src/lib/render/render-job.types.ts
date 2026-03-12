@@ -10,12 +10,25 @@ export type RuntimeVideoModelConfig = {
   modelId: string;
 };
 
+export type RenderReferenceAsset = {
+  id: string;
+  projectId: string;
+  fileName?: string | null;
+  url: string;
+};
+
 export type RenderPayloadInput = {
   projectId: string;
   templateId: string;
   scriptId: string;
   voiceStyle: string;
   aspectRatio: AspectRatio;
+  durationSec?: number;
+  firstFrameUrl?: string;
+  lastFrameUrl?: string;
+  referenceImageUrls?: string[];
+  referenceAssets?: RenderReferenceAsset[];
+  requestNonce?: string;
   provider?: string;
   selectedVideoModel?: RuntimeVideoModelConfig;
 };

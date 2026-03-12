@@ -21,6 +21,8 @@ describe("render-job domain", () => {
       scriptId: "scr_1",
       voiceStyle: "energetic",
       aspectRatio: "9:16",
+      referenceImageUrls: [],
+      referenceAssets: [],
       provider: "seadance",
     });
   });
@@ -46,7 +48,7 @@ describe("render-job domain", () => {
         templateId: "tpl_a",
         scriptId: "scr_1",
         voiceStyle: "energetic",
-        aspectRatio: "1:1",
+        aspectRatio: "1:1" as never,
       }),
     ).toThrow("aspectRatio");
   });
@@ -115,5 +117,78 @@ describe("render-job domain", () => {
     });
 
     expect(keyA).toBe(keyB);
+  });
+
+  it("accepts durationSec -1 for model auto duration", () => {
+    const payload = buildRenderPayload({
+      projectId: "proj_1",
+      templateId: "tpl_a",
+      scriptId: "scr_1",
+      voiceStyle: "energetic",
+      aspectRatio: "9:16",
+      durationSec: -1,
+    });
+
+    expect(payload.durationSec).toBe(-1);
+  });
+
+  it("accepts durationSec 30 and defers provider-specific normalization", () => {
+    const payload = buildRenderPayload({
+      projectId: "proj_1",
+      templateId: "tpl_a",
+      scriptId: "scr_1",
+      voiceStyle: "energetic",
+      aspectRatio: "9:16",
+      durationSec: 30,
+    });
+
+    expect(payload.durationSec).toBe(30);
+  });
+
+  it("rejects lastFrameUrl without firstFrameUrl", () => {
+    expect(() =>
+      buildRenderPayload({
+        projectId: "proj_1",
+        templateId: "tpl_a",
+        scriptId: "scr_1",
+        voiceStyle: "energetic",
+        aspectRatio: "9:16",
+        lastFrameUrl: "https://img.example.com/last.png",
+      }),
+    ).toThrow("firstFrameUrl");
+  });
+
+  it("rejects mixing frame mode and reference image mode", () => {
+    expect(() =>
+      buildRenderPayload({
+        projectId: "proj_1",
+        templateId: "tpl_a",
+        scriptId: "scr_1",
+        voiceStyle: "energetic",
+        aspectRatio: "9:16",
+        firstFrameUrl: "https://img.example.com/first.png",
+        referenceImageUrls: ["https://img.example.com/reference.png"],
+      }),
+    ).toThrow("referenceImageUrls");
+  });
+
+  it("rejects reference assets from another project", () => {
+    expect(() =>
+      buildRenderPayload({
+        projectId: "proj_1",
+        templateId: "tpl_a",
+        scriptId: "scr_1",
+        voiceStyle: "energetic",
+        aspectRatio: "9:16",
+        referenceAssets: [
+          {
+            id: "asset_1",
+            projectId: "proj_2",
+            fileName: "x.png",
+            url: "https://img.example.com/x.png",
+          },
+        ],
+      }),
+    ).toThrow("referenceAssets");
   });
 });
