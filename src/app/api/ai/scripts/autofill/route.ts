@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
+import { REFERENCE_ASSET_SELECTION_LIMIT } from "../../../../../lib/reference-assets.constants";
 
 const runtimeTextModelSchema = z.object({
   protocol: z.enum(["openai", "gemini"]),
@@ -18,7 +19,7 @@ const requestSchema = z.object({
       fileName: z.string().min(1),
       url: z.string().min(1),
     }),
-  ).min(1).max(8),
+  ).min(1).max(REFERENCE_ASSET_SELECTION_LIMIT),
   modelProvider: runtimeTextModelSchema.optional(),
 });
 

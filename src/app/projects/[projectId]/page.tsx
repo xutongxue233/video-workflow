@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import {
   getSsrSafeInitialModelProviders,
   loadStoredModelProvidersFromLocalStorage,
+  toRuntimeImageModelConfig,
   toRuntimeTextModelConfig,
   toRuntimeVideoModelConfig,
   type StoredModelProvider,
@@ -23,9 +24,10 @@ import {
   buildProjectScopedAssetsUrl,
   filterMaterialAssetsByProject,
 } from "@/lib/projects/workspace-refresh";
+import { REFERENCE_ASSET_SELECTION_LIMIT } from "@/lib/reference-assets.constants";
 
 type Locale = "zh-CN" | "en-US";
-type StepId = "script" | "video";
+type StepId = "materials" | "script" | "video";
 
 type RequestState = { loading: boolean; result: string };
 type JsonRecord = Record<string, unknown>;
@@ -83,6 +85,15 @@ type MaterialAssetItem = {
   createdAt: string;
 };
 
+type PromptTemplateItem = {
+  id: string;
+  projectId: string;
+  name: string;
+  prompt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type ScriptHistoryItem = {
   id: string;
   projectId: string;
@@ -131,6 +142,7 @@ type Dict = {
   modelSettings: string;
   backToHome: string;
   textModelProvider: string;
+  imageModelProvider: string;
   videoModelProvider: string;
   manualModel: string;
   modelUnknown: string;
@@ -218,6 +230,27 @@ type Dict = {
     shotStatus: string;
     ready: string;
   };
+  materialGen: {
+    title: string;
+    desc: string;
+    prompt: string;
+    promptPh: string;
+    templateName: string;
+    templateNamePh: string;
+    saveTemplate: string;
+    savingTemplate: string;
+    chooseTemplate: string;
+    prototypeFile: string;
+    refFiles: string;
+    outputCount: string;
+    size: string;
+    sizePh: string;
+    submit: string;
+    submitting: string;
+    needPrototype: string;
+    needPrompt: string;
+    generated: string;
+  };
 };
 
 const LOCALE_KEY = "video-workflow-locale";
@@ -241,6 +274,7 @@ const TEXT: Record<Locale, Dict> = {
     modelSettings: "模型配置",
     backToHome: "返回首页",
     textModelProvider: "文本模型供应商",
+    imageModelProvider: "图像模型供应商",
     videoModelProvider: "视频模型供应商",
     manualModel: "手动模型",
     modelUnknown: "模型未知",
@@ -263,10 +297,12 @@ const TEXT: Record<Locale, Dict> = {
     errorPrefix: "请求失败",
     stepTag: "步骤",
     stepNames: {
+      materials: "原型图批量生素材",
       script: "生成与编辑脚本",
       video: "提交视频生成",
     },
     stepHints: {
+      materials: "先准备可用素材。",
       script: "先生成再编辑。",
       video: "有脚本 ID 后可入队。",
     },
@@ -278,11 +314,11 @@ const TEXT: Record<Locale, Dict> = {
     },
     asset: {
       title: "素材上传",
-      desc: "上传当前项目源图。",
-      fileLabel: "选择素材文件",
-      submit: "上传图片",
+      desc: "可批量上传当前项目源图。",
+      fileLabel: "选择素材文件（可多选）",
+      submit: "上传素材",
       submitting: "上传中...",
-      chooseFile: "请先选择文件。",
+      chooseFile: "请先选择至少一个文件。",
       preview: "素材预览",
     },
     script: {
@@ -334,12 +370,34 @@ const TEXT: Record<Locale, Dict> = {
       shotStatus: "分镜进度",
       ready: "视频已生成",
     },
+    materialGen: {
+      title: "原型图批量生成素材",
+      desc: "上传原型图，按提示词与参考图批量生成素材图，并自动入库。",
+      prompt: "图像提示词",
+      promptPh: "例如：咖啡店门头，写实摄影风格，保留品牌元素与暖色调",
+      templateName: "模板名称",
+      templateNamePh: "例如：门店写实风",
+      saveTemplate: "保存为模板",
+      savingTemplate: "保存中...",
+      chooseTemplate: "选择模板填充",
+      prototypeFile: "原型图（单选）",
+      refFiles: "参考图（可多选）",
+      outputCount: "生成数量",
+      size: "尺寸（可选）",
+      sizePh: "例如：2048x2048 或 2K",
+      submit: "开始生成素材",
+      submitting: "生成中...",
+      needPrototype: "请先选择原型图。",
+      needPrompt: "请先填写提示词。",
+      generated: "素材生成完成。",
+    },
   },
   "en-US": {
     localeLabel: "Interface Language",
     modelSettings: "Model Settings",
     backToHome: "Back to Home",
     textModelProvider: "Text Model Provider",
+    imageModelProvider: "Image Model Provider",
     videoModelProvider: "Video Model Provider",
     manualModel: "manual model",
     modelUnknown: "model n/a",
@@ -362,10 +420,12 @@ const TEXT: Record<Locale, Dict> = {
     errorPrefix: "Request failed",
     stepTag: "Step",
     stepNames: {
+      materials: "Generate Materials",
       script: "Generate & Edit Script",
       video: "Queue Video Render",
     },
     stepHints: {
+      materials: "Prepare materials first.",
       script: "Generate first, then edit.",
       video: "Queue once Script ID is available.",
     },
@@ -377,11 +437,11 @@ const TEXT: Record<Locale, Dict> = {
     },
     asset: {
       title: "Asset Upload",
-      desc: "Upload a source image for the current project.",
-      fileLabel: "Select asset file",
-      submit: "Upload Image",
+      desc: "Upload one or more source images for the current project.",
+      fileLabel: "Select asset files (multi-select)",
+      submit: "Upload Assets",
       submitting: "Uploading...",
-      chooseFile: "Please choose a file first.",
+      chooseFile: "Please choose at least one file.",
       preview: "Asset Preview",
     },
     script: {
@@ -433,15 +493,29 @@ const TEXT: Record<Locale, Dict> = {
       shotStatus: "Shot Progress",
       ready: "Video is ready",
     },
+    materialGen: {
+      title: "Generate Materials From Prototype",
+      desc: "Upload a prototype image, apply prompt and references, and batch-generate material images.",
+      prompt: "Image Prompt",
+      promptPh: "e.g. realistic coffee storefront poster, warm cinematic daylight, preserve brand identity",
+      templateName: "Template Name",
+      templateNamePh: "e.g. Storefront Realistic",
+      saveTemplate: "Save As Template",
+      savingTemplate: "Saving...",
+      chooseTemplate: "Apply Template",
+      prototypeFile: "Prototype Image (single)",
+      refFiles: "Reference Images (optional)",
+      outputCount: "Output Count",
+      size: "Size (optional)",
+      sizePh: "e.g. 2048x2048 or 2K",
+      submit: "Generate Materials",
+      submitting: "Generating...",
+      needPrototype: "Please choose one prototype image.",
+      needPrompt: "Please provide a prompt.",
+      generated: "Material generation completed.",
+    },
   },
 };
-
-function formatJson(data: unknown): string {
-  if (typeof data === "string") {
-    return data;
-  }
-  return JSON.stringify(data, null, 2);
-}
 
 function toJsonRecord(data: unknown): JsonRecord {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
@@ -595,6 +669,85 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
+function fileToDataImageUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => {
+      reject(new Error("failed to read image file"));
+    };
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string" && /^data:image\/[a-z0-9.+-]+;base64,/i.test(result)) {
+        resolve(result);
+        return;
+      }
+      reject(new Error("invalid image data url"));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function extractApiMessage(data: unknown): string {
+  const record = toJsonRecord(data);
+  for (const key of ["message", "error", "detail"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function formatRequestErrorMessage(
+  locale: Locale,
+  status: number,
+  fallbackZh: string,
+  fallbackEn: string,
+  data: unknown,
+): string {
+  const apiMessage = extractApiMessage(data);
+  if (apiMessage) {
+    return localize(locale, `${fallbackZh}：${apiMessage}`, `${fallbackEn}: ${apiMessage}`);
+  }
+  return localize(
+    locale,
+    `${fallbackZh}（状态码 ${status}）`,
+    `${fallbackEn} (status ${status})`,
+  );
+}
+
+function toRenderStatusLabel(locale: Locale, status: string): string {
+  switch (status) {
+    case "QUEUED":
+      return localize(locale, "排队中", "Queued");
+    case "PROCESSING":
+      return localize(locale, "处理中", "Processing");
+    case "SUCCEEDED":
+      return localize(locale, "已完成", "Completed");
+    case "FAILED":
+      return localize(locale, "失败", "Failed");
+    case "CANCELED":
+      return localize(locale, "已取消", "Canceled");
+    default:
+      return status || localize(locale, "未知状态", "Unknown");
+  }
+}
+
+function toRenderStatusChipClass(status: string): string {
+  switch (status) {
+    case "SUCCEEDED":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "FAILED":
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    case "CANCELED":
+      return "border-slate-300 bg-slate-100 text-slate-600";
+    case "PROCESSING":
+      return "border-teal-200 bg-teal-50 text-teal-700";
+    default:
+      return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+}
+
 function getBadge(dict: Dict, step: StepView, isActive: boolean): { text: string; cls: string } {
   if (step.done) {
     return { text: dict.stepState.done, cls: "border-emerald-200 bg-emerald-50 text-emerald-700" };
@@ -606,27 +759,6 @@ function getBadge(dict: Dict, step: StepView, isActive: boolean): { text: string
     return { text: dict.stepState.active, cls: "border-teal-200 bg-teal-50 text-teal-700" };
   }
   return { text: dict.stepState.pending, cls: "border-slate-200 bg-slate-100 text-slate-600" };
-}
-
-function ResponsePanel({
-  heading,
-  state,
-  empty,
-}: {
-  heading: string;
-  state: RequestState;
-  empty: string;
-}) {
-  return (
-    <details className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950" open={Boolean(state.result) || state.loading}>
-      <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">
-        {heading}
-      </summary>
-      <pre role="status" aria-live="polite" className="max-h-52 overflow-auto px-4 pb-4 text-xs leading-5 text-slate-100">
-        {state.result || empty}
-      </pre>
-    </details>
-  );
 }
 
 function MediaPreviewDialog({
@@ -695,9 +827,20 @@ export default function Home() {
 
   const projectId = routeProjectId;
 
-  const [assetFile, setAssetFile] = useState<File | null>(null);
-  const [assetUrl, setAssetUrl] = useState("");
+  const [assetFiles, setAssetFiles] = useState<File[]>([]);
+  const [assetInputKey, setAssetInputKey] = useState(0);
   const [assetState, setAssetState] = useState<RequestState>({ loading: false, result: "" });
+  const [deletingAssetId, setDeletingAssetId] = useState("");
+  const [prototypeAssetFile, setPrototypeAssetFile] = useState<File | null>(null);
+  const [referenceGuideFiles, setReferenceGuideFiles] = useState<File[]>([]);
+  const [materialPromptInput, setMaterialPromptInput] = useState("");
+  const [materialOutputCount, setMaterialOutputCount] = useState(4);
+  const [materialOutputSize, setMaterialOutputSize] = useState("");
+  const [materialGenState, setMaterialGenState] = useState<RequestState>({ loading: false, result: "" });
+  const [promptTemplates, setPromptTemplates] = useState<PromptTemplateItem[]>([]);
+  const [selectedPromptTemplateId, setSelectedPromptTemplateId] = useState("");
+  const [promptTemplateName, setPromptTemplateName] = useState("");
+  const [promptTemplateState, setPromptTemplateState] = useState<RequestState>({ loading: false, result: "" });
 
   const [scriptId, setScriptId] = useState("");
   const [generationPayload, setGenerationPayload] = useState(DEFAULT_GENERATION_PAYLOAD);
@@ -732,6 +875,7 @@ export default function Home() {
     getSsrSafeInitialModelProviders(),
   );
   const [selectedTextProviderId, setSelectedTextProviderId] = useState("");
+  const [selectedImageProviderId, setSelectedImageProviderId] = useState("");
   const [selectedVideoProviderId, setSelectedVideoProviderId] = useState("");
   const [projects, setProjects] = useState<ProjectSummaryItem[]>([]);
   const [materialLibrary, setMaterialLibrary] = useState<MaterialAssetItem[]>([]);
@@ -740,7 +884,7 @@ export default function Home() {
   const [selectedReferenceAssetIds, setSelectedReferenceAssetIds] = useState<string[]>([]);
   const [workspaceState, setWorkspaceState] = useState<RequestState>({ loading: false, result: "" });
   const [previewDialog, setPreviewDialog] = useState<PreviewDialogState | null>(null);
-  const [preferredStepId, setPreferredStepId] = useState<StepId>("script");
+  const [preferredStepId, setPreferredStepId] = useState<StepId>("materials");
   const [hydratedProjectId, setHydratedProjectId] = useState("");
 
   const closePreviewDialog = useCallback(() => {
@@ -871,7 +1015,7 @@ export default function Home() {
       if (!projectsResponse.ok || !assetsResponse.ok || !scriptsResponse.ok || !jobsResponse.ok) {
         setWorkspaceState({
           loading: false,
-          result: localize(locale, "部分记录加载失败，请检查接口响应。", "Partial workspace load failed."),
+          result: localize(locale, "部分数据加载失败，可稍后点击刷新。", "Partial workspace load failed. You can refresh later."),
         });
         return;
       }
@@ -887,16 +1031,14 @@ export default function Home() {
       });
 
       if (!currentProject) {
-        setProjects((prev) => [
-          {
-            id: normalizedProjectId,
-            name: normalizedProjectId,
-            description: null,
-            updatedAt: new Date().toISOString(),
-            counts: { assets: 0, scripts: 0, renderJobs: 0, videos: 0 },
-          },
-          ...prev,
-        ]);
+        setWorkspaceState({
+          loading: false,
+          result: localize(
+            locale,
+            `项目 ${normalizedProjectId} 不存在或已删除。`,
+            `Project ${normalizedProjectId} does not exist or has been deleted.`,
+          ),
+        });
       }
     } catch (error) {
       setWorkspaceState({
@@ -919,6 +1061,37 @@ export default function Home() {
     };
   }, [projectId, refreshWorkspace]);
 
+  const refreshPromptTemplates = useCallback(async (targetProjectId = projectId) => {
+    const normalizedProjectId = targetProjectId.trim();
+    if (!normalizedProjectId) {
+      setPromptTemplates([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/prompt-templates?projectId=${encodeURIComponent(normalizedProjectId)}&limit=80`);
+      const data = toJsonRecord(await readJsonResponse(response));
+      if (!response.ok) {
+        setPromptTemplates([]);
+        return;
+      }
+      const items = Array.isArray(data.items) ? (data.items as PromptTemplateItem[]) : [];
+      setPromptTemplates(items.filter((item) => item.projectId === normalizedProjectId));
+    } catch {
+      setPromptTemplates([]);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void refreshPromptTemplates(projectId);
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [projectId, refreshPromptTemplates]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       const normalizedProjectId = projectId.trim();
@@ -934,6 +1107,7 @@ export default function Home() {
         setVoiceStyle(DEFAULT_VOICE_STYLE);
         setRenderAspectRatio("9:16");
         setSelectedTextProviderId("");
+        setSelectedImageProviderId("");
         setSelectedVideoProviderId("");
         setSelectedReferenceAssetIds([]);
         setHydratedProjectId(normalizedProjectId);
@@ -945,6 +1119,7 @@ export default function Home() {
       setVoiceStyle(saved.voiceStyle);
       setRenderAspectRatio(saved.renderAspectRatio);
       setSelectedTextProviderId(saved.selectedTextProviderId);
+      setSelectedImageProviderId(saved.selectedImageProviderId);
       setSelectedVideoProviderId(saved.selectedVideoProviderId);
       setSelectedReferenceAssetIds(saved.selectedReferenceAssetIds);
       setHydratedProjectId(normalizedProjectId);
@@ -979,6 +1154,7 @@ export default function Home() {
         voiceStyle,
         renderAspectRatio,
         selectedTextProviderId,
+        selectedImageProviderId,
         selectedVideoProviderId,
         selectedReferenceAssetIds,
       },
@@ -991,6 +1167,7 @@ export default function Home() {
     voiceStyle,
     renderAspectRatio,
     selectedTextProviderId,
+    selectedImageProviderId,
     selectedVideoProviderId,
     selectedReferenceAssetIds,
   ]);
@@ -1025,7 +1202,13 @@ export default function Home() {
         if (!response.ok) {
           setRenderState({
             loading: false,
-            result: `Request failed ${response.status}\n${formatJson(data)}`,
+            result: formatRequestErrorMessage(
+              locale,
+              response.status,
+              "任务状态查询失败，可稍后重试",
+              "Failed to refresh job status. Try again later",
+              data,
+            ),
           });
           setRenderJobStatus("FAILED");
           return;
@@ -1088,7 +1271,12 @@ export default function Home() {
         if (polledReferenceAssets) {
           setActiveRenderReferenceAssets(polledReferenceAssets);
         }
-        setRenderState({ loading: false, result: formatJson(data) });
+        setRenderState({
+          loading: false,
+          result: terminalStatus.has(status)
+            ? localize(locale, "任务状态已结束。", "Render task finished.")
+            : localize(locale, "正在查询任务状态...", "Polling render status..."),
+        });
 
         if (videoUrl) {
           setRenderVideoUrl(videoUrl);
@@ -1099,11 +1287,14 @@ export default function Home() {
         }
 
         scheduleNextPoll();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "failed to poll render job status";
+      } catch {
         setRenderState({
           loading: false,
-          result: `Request failed 500\n${message}`,
+          result: localize(
+            locale,
+            "任务状态刷新失败，系统将自动重试。",
+            "Failed to refresh render status. The system will retry automatically.",
+          ),
         });
         scheduleNextPoll();
       }
@@ -1117,7 +1308,7 @@ export default function Home() {
         clearTimeout(timer);
       }
     };
-  }, [renderJobId, renderPollNonce]);
+  }, [locale, renderJobId, renderPollNonce]);
 
   useEffect(() => {
     const normalizedScriptId = scriptId.trim();
@@ -1175,10 +1366,17 @@ export default function Home() {
 
   const steps = useMemo<StepView[]>(
     () => [
+      {
+        id: "materials",
+        title: dict.stepNames.materials,
+        hint: dict.stepHints.materials,
+        done: materialLibrary.length > 0,
+        blocked: false,
+      },
       { id: "script", title: dict.stepNames.script, hint: dict.stepHints.script, done: Boolean(scriptId.trim()), blocked: false },
       { id: "video", title: dict.stepNames.video, hint: dict.stepHints.video, done: Boolean(renderJobId), blocked: !scriptId.trim() },
     ],
-    [dict, renderJobId, scriptId],
+    [dict, materialLibrary.length, renderJobId, scriptId],
   );
 
   const completed = useMemo(() => steps.filter((step) => step.done).length, [steps]);
@@ -1219,6 +1417,13 @@ export default function Home() {
       ),
     [storedModelProviders],
   );
+  const availableImageProviders = useMemo(
+    () =>
+      storedModelProviders.filter(
+        (provider) => provider.enabled && provider.capability === "image" && Boolean(toRuntimeImageModelConfig(provider)),
+      ),
+    [storedModelProviders],
+  );
   const availableVideoProviders = useMemo(
     () =>
       storedModelProviders.filter(
@@ -1235,6 +1440,13 @@ export default function Home() {
         : (availableTextProviders[0]?.id ?? ""),
     [availableTextProviders, selectedTextProviderId],
   );
+  const resolvedImageProviderId = useMemo(
+    () =>
+      availableImageProviders.some((provider) => provider.id === selectedImageProviderId)
+        ? selectedImageProviderId
+        : (availableImageProviders[0]?.id ?? ""),
+    [availableImageProviders, selectedImageProviderId],
+  );
   const resolvedVideoProviderId = useMemo(
     () =>
       availableVideoProviders.some((provider) => provider.id === selectedVideoProviderId)
@@ -1246,6 +1458,10 @@ export default function Home() {
   const selectedTextProvider = useMemo(
     () => availableTextProviders.find((provider) => provider.id === resolvedTextProviderId) ?? null,
     [availableTextProviders, resolvedTextProviderId],
+  );
+  const selectedImageProvider = useMemo(
+    () => availableImageProviders.find((provider) => provider.id === resolvedImageProviderId) ?? null,
+    [availableImageProviders, resolvedImageProviderId],
   );
   const selectedVideoProvider = useMemo(
     () => availableVideoProviders.find((provider) => provider.id === resolvedVideoProviderId) ?? null,
@@ -1324,10 +1540,6 @@ export default function Home() {
       .sort((a, b) => b.latestTs - a.latestTs)
       .slice(0, 10);
   }, [currentProjectJobs, currentProjectScripts]);
-  const currentRenderJob = useMemo(
-    () => currentProjectJobs.find((job) => job.id === renderJobId.trim()) ?? null,
-    [currentProjectJobs, renderJobId],
-  );
   const isRenderPolling = Boolean(renderJobId.trim()) &&
     !["SUCCEEDED", "FAILED", "CANCELED"].includes(renderJobStatus);
   const renderVideoResults = useMemo(() => {
@@ -1359,15 +1571,6 @@ export default function Home() {
     return Array.from(map.values()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [currentProjectJobs, renderJobId, renderJobStatus, renderVideoUrl]);
 
-  useEffect(() => {
-    if (!renderJobId.trim()) {
-      setActiveRenderReferenceAssets([]);
-      return;
-    }
-
-    setActiveRenderReferenceAssets(currentRenderJob?.referenceAssets ?? []);
-  }, [currentRenderJob, renderJobId]);
-
   const inputClass =
     "h-11 w-full rounded-2xl border border-slate-300/90 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-200";
   const textAreaClass =
@@ -1388,7 +1591,7 @@ export default function Home() {
         return prev.filter((id) => id !== assetId);
       }
 
-      if (prev.length >= 8) {
+      if (prev.length >= REFERENCE_ASSET_SELECTION_LIMIT) {
         return prev;
       }
 
@@ -1429,39 +1632,269 @@ export default function Home() {
     });
   }
 
+  async function uploadAssetFiles(files: File[]): Promise<{
+    created: MaterialAssetItem[];
+    failures: Array<{ fileName: string }>;
+  }> {
+    const created: MaterialAssetItem[] = [];
+    const failures: Array<{ fileName: string }> = [];
+
+    for (const file of files) {
+      const formData = new FormData();
+      formData.append("projectId", projectId);
+      formData.append("file", file);
+
+      const response = await fetch("/api/assets", { method: "POST", body: formData });
+      const data = toJsonRecord(await readJsonResponse(response));
+      if (!response.ok) {
+        failures.push({ fileName: file.name });
+        continue;
+      }
+
+      if (
+        typeof data.id === "string" &&
+        typeof data.projectId === "string" &&
+        typeof data.url === "string"
+      ) {
+        created.push({
+          id: data.id,
+          projectId: data.projectId,
+          fileName: typeof data.fileName === "string" ? data.fileName : null,
+          url: normalizeFileUrl(data.url),
+          createdAt: typeof data.createdAt === "string" ? data.createdAt : new Date().toISOString(),
+        });
+      }
+    }
+
+    return { created, failures };
+  }
+
+  async function handleDeleteAsset(assetId: string) {
+    const normalizedProjectId = projectId.trim();
+    if (!normalizedProjectId || !assetId.trim()) {
+      return;
+    }
+
+    setDeletingAssetId(assetId);
+    try {
+      const response = await fetch(
+        `/api/assets/${encodeURIComponent(assetId)}?projectId=${encodeURIComponent(normalizedProjectId)}`,
+        { method: "DELETE" },
+      );
+      const data = toJsonRecord(await readJsonResponse(response));
+      if (!response.ok) {
+        setAssetState({
+          loading: false,
+          result: formatRequestErrorMessage(locale, response.status, "素材移除失败", "Failed to remove asset", data),
+        });
+        return;
+      }
+
+      setMaterialLibrary((prev) => prev.filter((asset) => asset.id !== assetId));
+      setSelectedReferenceAssetIds((prev) => prev.filter((id) => id !== assetId));
+      setAssetState({
+        loading: false,
+        result: localize(locale, "素材已移除。", "Asset removed."),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "failed";
+      setAssetState({
+        loading: false,
+        result: localize(locale, `素材移除失败：${message}`, `Failed to remove asset: ${message}`),
+      });
+    } finally {
+      setDeletingAssetId("");
+    }
+  }
+
   async function handleUploadAsset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!assetFile) {
+    if (assetFiles.length === 0) {
       setAssetState({ loading: false, result: dict.asset.chooseFile });
       return;
     }
 
     setAssetState({ loading: true, result: dict.asset.submitting });
 
-    const formData = new FormData();
-    formData.append("projectId", projectId);
-    formData.append("file", assetFile);
+    const { created, failures } = await uploadAssetFiles(assetFiles);
+    const uploadedIds = created.map((item) => item.id);
 
-    const response = await fetch("/api/assets", { method: "POST", body: formData });
-    const data = toJsonRecord(await readJsonResponse(response));
+    if (uploadedIds.length > 0) {
+      setSelectedReferenceAssetIds((prev) => {
+        const next = [...prev];
+        for (const assetId of uploadedIds) {
+          if (next.includes(assetId)) {
+            continue;
+          }
+          if (next.length >= REFERENCE_ASSET_SELECTION_LIMIT) {
+            break;
+          }
+          next.push(assetId);
+        }
+        return next;
+      });
+    }
 
-    if (response.ok) {
-      const url = typeof data.url === "string" ? data.url : "";
-      const uploadedAssetId = typeof data.id === "string" ? data.id : "";
-      setAssetUrl(normalizeFileUrl(url));
-      if (uploadedAssetId) {
-        setSelectedReferenceAssetIds((prev) =>
-          prev.includes(uploadedAssetId) ? prev : [...prev, uploadedAssetId].slice(0, 8),
-        );
-      }
-      setAssetState({ loading: false, result: formatJson(data) });
-      await refreshWorkspace(projectId);
+    setAssetFiles([]);
+    setAssetInputKey((prev) => prev + 1);
+    await refreshWorkspace(projectId);
+
+    if (failures.length === 0) {
+      setAssetState({
+        loading: false,
+        result: localize(
+          locale,
+          `上传完成：${uploadedIds.length}/${assetFiles.length} 个素材。`,
+          `Upload completed: ${uploadedIds.length}/${assetFiles.length} asset(s).`,
+        ),
+      });
       return;
     }
 
+    const failurePreview = failures
+      .slice(0, 2)
+      .map((item) => item.fileName)
+      .join(localize(locale, "、", ", "));
+    const failureSuffix = failures.length > 2 ? localize(locale, "等", " and more") : "";
     setAssetState({
       loading: false,
-      result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
+      result: localize(
+        locale,
+        `上传完成：成功 ${uploadedIds.length}，失败 ${failures.length}${failurePreview ? `（${failurePreview}${failureSuffix}）` : ""}。`,
+        `Upload completed: ${uploadedIds.length} succeeded, ${failures.length} failed${failurePreview ? ` (${failurePreview}${failureSuffix})` : ""}.`,
+      ),
+    });
+  }
+
+  async function handleSavePromptTemplate() {
+    if (!promptTemplateName.trim() || !materialPromptInput.trim()) {
+      setPromptTemplateState({
+        loading: false,
+        result: localize(locale, "模板名称和提示词不能为空。", "Template name and prompt are required."),
+      });
+      return;
+    }
+
+    setPromptTemplateState({ loading: true, result: dict.materialGen.savingTemplate });
+    const response = await fetch("/api/prompt-templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId,
+        name: promptTemplateName.trim(),
+        prompt: materialPromptInput.trim(),
+      }),
+    });
+    const data = toJsonRecord(await readJsonResponse(response));
+    if (!response.ok) {
+      setPromptTemplateState({
+        loading: false,
+        result: formatRequestErrorMessage(locale, response.status, "保存模板失败", "Failed to save template", data),
+      });
+      return;
+    }
+
+    const createdId = typeof data.id === "string" ? data.id : "";
+    setPromptTemplateName("");
+    await refreshPromptTemplates(projectId);
+    if (createdId) {
+      setSelectedPromptTemplateId(createdId);
+    }
+    setPromptTemplateState({
+      loading: false,
+      result: localize(locale, "模板已保存。", "Template saved."),
+    });
+  }
+
+  async function handleGenerateMaterialImages() {
+    if (!prototypeAssetFile) {
+      setMaterialGenState({ loading: false, result: dict.materialGen.needPrototype });
+      return;
+    }
+    if (!materialPromptInput.trim()) {
+      setMaterialGenState({ loading: false, result: dict.materialGen.needPrompt });
+      return;
+    }
+
+    setMaterialGenState({ loading: true, result: dict.materialGen.submitting });
+    const runtimeImageModel = selectedImageProvider ? toRuntimeImageModelConfig(selectedImageProvider) : null;
+    if (!runtimeImageModel) {
+      setMaterialGenState({
+        loading: false,
+        result: localize(
+          locale,
+          "未找到可用图像模型，请先在设置页启用并选择 Seedream 模型。",
+          "No image model is selected. Enable and select a Seedream model in Settings first.",
+        ),
+      });
+      return;
+    }
+
+    let prototypeDataUrl = "";
+    try {
+      prototypeDataUrl = await fileToDataImageUrl(prototypeAssetFile);
+    } catch {
+      setMaterialGenState({
+        loading: false,
+        result: localize(locale, "原型图读取失败。", "Failed to read prototype image."),
+      });
+      return;
+    }
+
+    const referenceUpload = referenceGuideFiles.length > 0
+      ? await uploadAssetFiles(referenceGuideFiles)
+      : { created: [], failures: [] as Array<{ fileName: string }> };
+
+    const response = await fetch("/api/images/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId,
+        prompt: materialPromptInput.trim(),
+        outputCount: materialOutputCount,
+        size: materialOutputSize.trim() || undefined,
+        prototypeImageUrl: prototypeDataUrl,
+        referenceImageUrls: referenceUpload.created.map((item) => toAbsoluteFileUrl(item.url)),
+        selectedImageModel: runtimeImageModel,
+      }),
+    });
+    const data = toJsonRecord(await readJsonResponse(response));
+
+    if (!response.ok) {
+      setMaterialGenState({
+        loading: false,
+        result: formatRequestErrorMessage(locale, response.status, "素材生成失败", "Failed to generate materials", data),
+      });
+      return;
+    }
+
+    const generatedItems = Array.isArray(data.items) ? (data.items as MaterialAssetItem[]) : [];
+    if (generatedItems.length > 0) {
+      setSelectedReferenceAssetIds((prev) => {
+        const next = [...prev];
+        for (const item of generatedItems) {
+          if (next.includes(item.id)) {
+            continue;
+          }
+          if (next.length >= REFERENCE_ASSET_SELECTION_LIMIT) {
+            break;
+          }
+          next.push(item.id);
+        }
+        return next;
+      });
+    }
+
+    setPrototypeAssetFile(null);
+    setReferenceGuideFiles([]);
+    await refreshWorkspace(projectId);
+    setMaterialGenState({
+      loading: false,
+      result: localize(
+        locale,
+        `${dict.materialGen.generated} ${generatedItems.length} 张。`,
+        `${dict.materialGen.generated} ${generatedItems.length} image(s).`,
+      ),
     });
   }
 
@@ -1526,14 +1959,23 @@ export default function Home() {
       setRenderJobId("");
       setRenderJobStatus("");
       setRenderVideoUrl("");
-      setScriptState({ loading: false, result: formatJson(data) });
+      setScriptState({
+        loading: false,
+        result: localize(locale, "脚本生成成功，可继续编辑。", "Script generated. You can edit it now."),
+      });
       await refreshWorkspace(projectId);
       return;
     }
 
     setScriptState({
       loading: false,
-      result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
+      result: formatRequestErrorMessage(
+        locale,
+        response.status,
+        "脚本生成失败",
+        "Failed to generate script",
+        data,
+      ),
     });
   }
 
@@ -1578,14 +2020,20 @@ export default function Home() {
 
       setScriptState({
         loading: false,
-        result: formatJson(data),
+        result: localize(locale, "已根据素材自动填充参数。", "Fields were auto-filled from selected assets."),
       });
       return;
     }
 
     setScriptState({
       loading: false,
-      result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
+      result: formatRequestErrorMessage(
+        locale,
+        response.status,
+        "自动填充失败",
+        "Auto-fill failed",
+        data,
+      ),
     });
   }
 
@@ -1624,14 +2072,23 @@ export default function Home() {
         ...prev,
         storyboard,
       }));
-      setScriptState({ loading: false, result: formatJson(data) });
+      setScriptState({
+        loading: false,
+        result: localize(locale, "脚本已保存。", "Script saved."),
+      });
       await refreshWorkspace(projectId);
       return;
     }
 
     setScriptState({
       loading: false,
-      result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
+      result: formatRequestErrorMessage(
+        locale,
+        response.status,
+        "保存脚本失败",
+        "Failed to save script",
+        data,
+      ),
     });
   }
 
@@ -1682,7 +2139,10 @@ export default function Home() {
         setRenderJobStatus(data.status);
       }
       setRenderPollNonce((prev) => prev + 1);
-      setRenderState({ loading: false, result: formatJson(data) });
+      setRenderState({
+        loading: false,
+        result: localize(locale, "任务已提交，正在生成。", "Render job queued and processing."),
+      });
       await refreshWorkspace(projectId);
       return;
     }
@@ -1693,7 +2153,13 @@ export default function Home() {
     setActiveRenderReferenceAssets([]);
     setRenderState({
       loading: false,
-      result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
+      result: formatRequestErrorMessage(
+        locale,
+        response.status,
+        "提交任务失败",
+        "Failed to submit render job",
+        data,
+      ),
     });
   }
 
@@ -1744,14 +2210,23 @@ export default function Home() {
       setRenderProgress(null);
       setRenderShotStatuses([]);
       setRenderPollNonce((prev) => prev + 1);
-      setRenderState({ loading: false, result: formatJson(data) });
+      setRenderState({
+        loading: false,
+        result: localize(locale, "重试任务已提交。", "Retry request submitted."),
+      });
       await refreshWorkspace(projectId);
       return;
     }
 
     setRenderState({
       loading: false,
-      result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
+      result: formatRequestErrorMessage(
+        locale,
+        response.status,
+        "重试失败",
+        "Retry failed",
+        data,
+      ),
     });
   }
 
@@ -1770,6 +2245,15 @@ export default function Home() {
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{dict.heroTag}</p>
               <h1 className="mt-2 text-3xl font-semibold text-slate-900 md:text-5xl">{dict.heroTitle}</h1>
               <p className="mt-3 text-sm leading-7 text-slate-600 md:text-base">{dict.heroDesc}</p>
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700">
+                <span>{localize(locale, "当前项目", "Current Project")}</span>
+                <span className="text-slate-800">
+                  {currentProjectSummary?.name || currentProjectSummary?.id || projectId}
+                </span>
+              </div>
+              {workspaceState.result ? (
+                <p className="mt-2 text-xs text-slate-500">{workspaceState.result}</p>
+              ) : null}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
@@ -1825,19 +2309,6 @@ export default function Home() {
             </article>
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/90 p-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-                {localize(locale, "当前项目", "Current Project")}
-              </p>
-              <p className="mt-1 text-lg font-semibold text-slate-900">
-                {currentProjectSummary?.name || localize(locale, "未命名项目", "Untitled Project")}
-              </p>
-            </div>
-            <button type="button" onClick={() => void refreshWorkspace(projectId)} className={secondaryButtonClass}>
-              {workspaceState.loading ? localize(locale, "刷新中...", "Refreshing...") : localize(locale, "刷新记录", "Refresh Records")}
-            </button>
-          </div>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -1899,232 +2370,329 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="rounded-3xl border border-white/70 bg-white/84 p-5 shadow-[0_14px_36px_rgba(15,23,42,0.08)]">
-              <div className="flex items-start justify-between gap-2">
+          </aside>
+
+	          <div className="min-w-0 space-y-6">
+            <article className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                     {localize(locale, "素材与上传", "Assets & Upload")}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
-                    {localize(locale, "在这里上传并选择参考素材。", "Upload and select reference assets here.")}
+                    {localize(locale, "可批量上传素材，勾选用于脚本与视频生成的参考图。", "Batch upload assets and select references for script/video generation.")}
                   </p>
                 </div>
-                <span className="inline-flex rounded-full border border-teal-200 bg-teal-50 px-2 py-1 text-[11px] font-semibold text-teal-700">
-                  {selectedReferenceAssets.length}/8
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-700">
+                    {selectedReferenceAssets.length}/{REFERENCE_ASSET_SELECTION_LIMIT}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedReferenceAssetIds([])}
+                    disabled={selectedReferenceAssetIds.length === 0}
+                    className="inline-flex h-8 items-center justify-center rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {localize(locale, "清空勾选", "Clear Selection")}
+                  </button>
+                </div>
               </div>
 
-              <form className="mt-4 grid gap-2" onSubmit={handleUploadAsset}>
-                <label htmlFor="asset-file" className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
-                  {dict.asset.fileLabel}
-                </label>
+              <form className="mt-4 grid gap-2 md:grid-cols-[1fr_auto]" onSubmit={handleUploadAsset}>
                 <input
+                  key={assetInputKey}
                   id="asset-file"
                   type="file"
                   accept="image/*"
-                  onChange={(event) => setAssetFile(event.target.files?.[0] ?? null)}
+                  multiple
+                  onChange={(event) => setAssetFiles(Array.from(event.target.files ?? []))}
                   className="block w-full cursor-pointer rounded-2xl border border-slate-300 bg-white p-2 text-xs text-slate-700 file:mr-2 file:cursor-pointer file:rounded-lg file:border-0 file:bg-slate-900 file:px-2 file:py-1.5 file:text-xs file:font-semibold file:text-white"
                 />
                 <button type="submit" disabled={assetState.loading} className={primaryButtonClass}>
                   {assetState.loading ? dict.asset.submitting : dict.asset.submit}
                 </button>
               </form>
-
-              {assetUrl ? (
-                <button
-                  type="button"
-                  onClick={() => openImagePreview(assetUrl, dict.asset.preview)}
-                  className="group mt-3 block w-full overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 text-left transition hover:border-teal-300 hover:bg-teal-50/40"
-                >
-                  <div className="aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={assetUrl}
-                      alt="Uploaded project asset preview"
-                      className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]"
-                    />
-                  </div>
-                </button>
+              {assetState.result ? (
+                <p className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">{assetState.result}</p>
               ) : null}
 
-              <div className="mt-3 max-h-[360px] space-y-2 overflow-auto pr-1">
-                {materialLibrary.slice(0, 24).map((asset) => {
-                  const selected = selectedReferenceAssetIds.includes(asset.id);
-                  return (
-                    <article
-                      key={`material-${asset.id}`}
-                      className={`rounded-2xl border p-2 transition ${
-                        selected
-                          ? "border-teal-400 bg-teal-50/70"
-                          : "border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <label className="inline-flex cursor-pointer items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={() => toggleReferenceAsset(asset.id)}
-                            className="h-4 w-4 accent-teal-700"
-                          />
-                          <span className="text-[11px] font-semibold text-slate-600">
-                            {selected ? localize(locale, "已选中", "Selected") : localize(locale, "勾选", "Select")}
-                          </span>
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openImagePreview(asset.url, asset.fileName || asset.id)}
-                          className="text-[11px] font-semibold text-teal-700 underline underline-offset-4"
+              <div className="mt-4 max-h-[520px] overflow-auto pr-1">
+                {materialLibrary.length === 0 ? (
+                  <p className="rounded-2xl border border-dashed border-slate-300 bg-white px-3 py-5 text-center text-sm text-slate-500">
+                    {localize(locale, "还没有素材，先上传几张图。", "No assets yet. Upload a few images first.")}
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+                    {[...materialLibrary]
+                      .sort((a, b) => Number(selectedReferenceAssetIds.includes(b.id)) - Number(selectedReferenceAssetIds.includes(a.id)))
+                      .map((asset) => {
+                      const selected = selectedReferenceAssetIds.includes(asset.id);
+                      const assetLabel = asset.fileName?.trim() || localize(locale, "未命名素材", "Untitled Asset");
+                      return (
+                        <article
+                          key={`material-${asset.id}`}
+                          className={`rounded-xl border p-2 transition ${
+                            selected
+                              ? "border-teal-400 bg-teal-50/70"
+                              : "border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50"
+                          }`}
                         >
-                          {localize(locale, "预览", "Preview")}
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => openImagePreview(asset.url, asset.fileName || asset.id)}
-                        className="mt-2 block w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={asset.url}
-                          alt={asset.fileName || asset.id}
-                          className="h-24 w-full object-contain"
-                        />
-                      </button>
-                      <p className="mt-2 truncate text-xs font-semibold text-slate-700">{asset.fileName || asset.id}</p>
-                    </article>
-                  );
-                })}
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="inline-flex cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => toggleReferenceAsset(asset.id)}
+                                className="h-4 w-4 accent-teal-700"
+                              />
+                              <span className="text-[11px] font-semibold text-slate-600">
+                                {selected ? localize(locale, "已选中", "Selected") : localize(locale, "勾选", "Select")}
+                              </span>
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openImagePreview(asset.url, assetLabel)}
+                                className="text-[11px] font-semibold text-teal-700 underline underline-offset-4"
+                              >
+                                {localize(locale, "预览", "Preview")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteAsset(asset.id)}
+                                disabled={deletingAssetId === asset.id}
+                                className="text-[11px] font-semibold text-rose-700 underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {deletingAssetId === asset.id
+                                  ? localize(locale, "移除中...", "Removing...")
+                                  : localize(locale, "移除", "Remove")}
+                              </button>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openImagePreview(asset.url, assetLabel)}
+                            className="mt-2 block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-100"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={asset.url}
+                              alt={assetLabel}
+                              className="h-24 w-full object-contain"
+                            />
+                          </button>
+                          <p className="mt-2 truncate text-xs font-semibold text-slate-700">{assetLabel}</p>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </article>
+            <article className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {localize(locale, "项目概览", "Project Overview")}
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {localize(
+                      locale,
+                      "统计当前项目的素材、脚本、任务和成片数量。",
+                      "Quick stats for assets, scripts, jobs, and generated videos in this project.",
+                    )}
+                  </p>
+                </div>
               </div>
 
-              <ResponsePanel heading={dict.responseTitle} state={assetState} empty={dict.responseEmpty} />
-            </section>
-          </aside>
+              <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{localize(locale, "素材", "Assets")}</p>
+                  <p className="mt-1 text-xl font-semibold text-slate-900">{currentProjectSummary?.counts.assets ?? 0}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{localize(locale, "脚本", "Scripts")}</p>
+                  <p className="mt-1 text-xl font-semibold text-slate-900">{currentProjectSummary?.counts.scripts ?? 0}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{localize(locale, "任务", "Jobs")}</p>
+                  <p className="mt-1 text-xl font-semibold text-slate-900">{currentProjectSummary?.counts.renderJobs ?? 0}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{localize(locale, "成片", "Videos")}</p>
+                  <p className="mt-1 text-xl font-semibold text-slate-900">{currentProjectSummary?.counts.videos ?? 0}</p>
+                </div>
+              </div>
+            </article>
 
-	          <div className="min-w-0 space-y-6">
-	            <article className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">
-	              <div className="flex flex-wrap items-start justify-between gap-3">
-	                <div>
-	                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-	                    {localize(locale, "项目工作区", "Project Workspace")}
-	                  </p>
-	                  <h2 className="mt-1 text-2xl font-semibold text-slate-900">
-	                    {currentProjectSummary?.name || localize(locale, "未命名项目", "Untitled Project")}
-	                  </h2>
-	                  <p className="mt-2 text-sm text-slate-600">
-	                    {localize(
-	                      locale,
-	                      "同一项目会保留素材、文案、渲染历史与配置。",
-	                      "Each project keeps materials, scripts, render history, and configuration.",
-	                    )}
-	                  </p>
-	                </div>
-	              </div>
+            {activeStepId === "materials" ? (
+            <article id="stage-materials" className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]" style={{ animationDelay: "40ms" }}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {dict.stepTag} {String((stepMap.materials?.index ?? 0) + 1).padStart(2, "0")}
+                  </p>
+                  <h2 className="mt-1 text-2xl font-semibold text-slate-900">{dict.materialGen.title}</h2>
+                  <p className="mt-2 text-sm text-slate-600">{dict.materialGen.desc}</p>
+                </div>
+                <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.1em] ${getBadge(dict, stepMap.materials, activeStep === stepMap.materials.index).cls}`}>
+                  {getBadge(dict, stepMap.materials, activeStep === stepMap.materials.index).text}
+                </span>
+              </div>
 
-	              <div className="mt-4 grid gap-3 sm:grid-cols-4">
-	                <div className="rounded-2xl border border-slate-200 bg-white p-3">
-	                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{localize(locale, "素材", "Assets")}</p>
-	                  <p className="mt-1 text-xl font-semibold text-slate-900">{currentProjectSummary?.counts.assets ?? 0}</p>
-	                </div>
-	                <div className="rounded-2xl border border-slate-200 bg-white p-3">
-	                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{localize(locale, "脚本", "Scripts")}</p>
-	                  <p className="mt-1 text-xl font-semibold text-slate-900">{currentProjectSummary?.counts.scripts ?? 0}</p>
-	                </div>
-	                <div className="rounded-2xl border border-slate-200 bg-white p-3">
-	                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{localize(locale, "任务", "Jobs")}</p>
-	                  <p className="mt-1 text-xl font-semibold text-slate-900">{currentProjectSummary?.counts.renderJobs ?? 0}</p>
-	                </div>
-	                <div className="rounded-2xl border border-slate-200 bg-white p-3">
-	                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{localize(locale, "成片", "Videos")}</p>
-	                  <p className="mt-1 text-xl font-semibold text-slate-900">{currentProjectSummary?.counts.videos ?? 0}</p>
-	                </div>
-	              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{dict.imageModelProvider}</p>
+                  {availableImageProviders.length > 0 ? (
+                    <select
+                      value={resolvedImageProviderId}
+                      onChange={(event) => setSelectedImageProviderId(event.target.value)}
+                      className={`${inputClass} mt-2`}
+                    >
+                      {availableImageProviders.map((provider) => (
+                        <option key={`image-provider-${provider.id}`} value={provider.id}>
+                          {provider.name} | {provider.selectedModelId || provider.manualModelId || dict.manualModel}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-600">
+                      {localize(locale, "未发现可用图像模型，请先在", "No image model available. Enable one in ")}
+                      <Link href="/settings" className="font-semibold text-teal-700 underline underline-offset-4">
+                        {localize(locale, "设置页", "Settings")}
+                      </Link>
+                      {localize(locale, "配置 Seedream 模型。", ".")}
+                    </p>
+                  )}
+                </div>
 
-	              <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
-	                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-	                  {localize(locale, "脚本与任务历史", "Script & Job Timeline")}
-	                </p>
-	                <div className="mt-2 max-h-[420px] space-y-3 overflow-auto pr-1">
-	                  {scriptJobGroups.length > 0 ? (
-	                    scriptJobGroups.map((group) => (
-	                      <article key={`timeline-${group.key}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-	                        <div className="flex items-start justify-between gap-2">
-	                          <div className="min-w-0">
-	                            <p className="truncate text-sm font-semibold text-slate-900">
-	                              {group.script?.title || localize(locale, "未命名脚本", "Untitled Script")}
-	                            </p>
-	                            <p className="mt-1 text-[11px] text-slate-500">
-	                              {group.script
-	                                ? `${new Date(group.script.updatedAt).toLocaleString(locale)} · ${group.script.generatorModel || dict.modelUnknown}`
-	                                : localize(locale, "脚本信息缺失或任务未绑定脚本", "Script not found or job not linked")}
-	                            </p>
-	                          </div>
-	                          {group.script ? (
-	                            <button
-	                              type="button"
-	                              onClick={() => {
-	                                setScriptId(group.script?.id || "");
-	                                setPreferredStepId("script");
-	                              }}
-	                              className="shrink-0 text-[11px] font-semibold text-teal-700 underline underline-offset-4"
-	                            >
-	                              {localize(locale, "编辑脚本", "Edit Script")}
-	                            </button>
-	                          ) : null}
-	                        </div>
-	                        {group.jobs.length > 0 ? (
-	                          <div className="mt-2 space-y-1.5">
-	                            {group.jobs.slice(0, 5).map((job) => (
-	                              <button
-	                                key={`timeline-job-${job.id}`}
-	                                type="button"
-                                onClick={() => {
-                                  setRenderJobId(job.id);
-                                  setRenderJobStatus(job.status);
-                                  setRenderProgress(job.progress ?? null);
-                                  setRenderShotStatuses([]);
-                                  setActiveRenderReferenceAssets(job.referenceAssets ?? []);
-                                  if (job.videoUrl) {
-                                    setRenderVideoUrl(job.videoUrl);
-                                  } else {
-                                    setRenderVideoUrl("");
-                                  }
-                                  setRenderPollNonce((prev) => prev + 1);
-                                  setPreferredStepId("video");
-                                }}
-	                                className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50"
-	                              >
-	                                <span className="min-w-0">
-                                    <span className="block truncate text-xs font-semibold text-slate-800">{job.id}</span>
-                                    {Array.isArray(job.referenceAssets) && job.referenceAssets.length > 0 ? (
-                                      <span className="mt-0.5 block truncate text-[11px] text-teal-700">
-                                        {localize(locale, `参考素材 ${job.referenceAssets.length} 张`, `${job.referenceAssets.length} reference assets`)}
-                                      </span>
-                                    ) : null}
-                                  </span>
-	                                <span className="ml-2 shrink-0 text-[11px] text-slate-500">
-	                                  {job.status} · {new Date(job.updatedAt).toLocaleString(locale)}
-	                                </span>
-	                              </button>
-	                            ))}
-	                          </div>
-	                        ) : (
-	                          <p className="mt-2 text-xs text-slate-500">{localize(locale, "该脚本还没有任务。", "No jobs under this script yet.")}</p>
-	                        )}
-	                      </article>
-	                    ))
-	                  ) : (
-	                    <p className="text-xs text-slate-500">{localize(locale, "暂无脚本与任务历史。", "No scripts or jobs yet.")}</p>
-	                  )}
-	                </div>
-	              </section>
-	            </article>
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <label className="space-y-1">
+                    <span className="text-sm font-semibold text-slate-700">{dict.materialGen.chooseTemplate}</span>
+                    <select
+                      value={selectedPromptTemplateId}
+                      onChange={(event) => {
+                        const nextTemplateId = event.target.value;
+                        setSelectedPromptTemplateId(nextTemplateId);
+                        const template = promptTemplates.find((item) => item.id === nextTemplateId);
+                        if (template) {
+                          setMaterialPromptInput(template.prompt);
+                        }
+                      }}
+                      className={inputClass}
+                    >
+                      <option value="">{localize(locale, "不使用模板", "No template")}</option>
+                      {promptTemplates.map((template) => (
+                        <option key={`prompt-template-${template.id}`} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-sm font-semibold text-slate-700">{dict.materialGen.templateName}</span>
+                  <input
+                    value={promptTemplateName}
+                    onChange={(event) => setPromptTemplateName(event.target.value)}
+                    placeholder={dict.materialGen.templateNamePh}
+                    className={inputClass}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void handleSavePromptTemplate()}
+                  disabled={promptTemplateState.loading || !promptTemplateName.trim() || !materialPromptInput.trim()}
+                  className={`${secondaryButtonClass} self-end`}
+                >
+                  {promptTemplateState.loading ? dict.materialGen.savingTemplate : dict.materialGen.saveTemplate}
+                </button>
+              </div>
+
+              <label className="mt-4 block space-y-1">
+                <span className="text-sm font-semibold text-slate-700">{dict.materialGen.prompt}</span>
+                <textarea
+                  value={materialPromptInput}
+                  onChange={(event) => setMaterialPromptInput(event.target.value)}
+                  rows={3}
+                  placeholder={dict.materialGen.promptPh}
+                  className={textAreaClass}
+                />
+              </label>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-sm font-semibold text-slate-700">{dict.materialGen.prototypeFile}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => setPrototypeAssetFile(event.target.files?.[0] ?? null)}
+                    className="block w-full cursor-pointer rounded-2xl border border-slate-300 bg-white p-2 text-xs text-slate-700 file:mr-2 file:cursor-pointer file:rounded-lg file:border-0 file:bg-slate-900 file:px-2 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-sm font-semibold text-slate-700">{dict.materialGen.refFiles}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(event) => setReferenceGuideFiles(Array.from(event.target.files ?? []))}
+                    className="block w-full cursor-pointer rounded-2xl border border-slate-300 bg-white p-2 text-xs text-slate-700 file:mr-2 file:cursor-pointer file:rounded-lg file:border-0 file:bg-slate-900 file:px-2 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <label className="space-y-1">
+                  <span className="text-sm font-semibold text-slate-700">{dict.materialGen.outputCount}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={14}
+                    value={materialOutputCount}
+                    onChange={(event) => setMaterialOutputCount(Math.max(1, Math.min(14, Number(event.target.value) || 1)))}
+                    className={inputClass}
+                  />
+                </label>
+                <label className="space-y-1 md:col-span-2">
+                  <span className="text-sm font-semibold text-slate-700">{dict.materialGen.size}</span>
+                  <input
+                    value={materialOutputSize}
+                    onChange={(event) => setMaterialOutputSize(event.target.value)}
+                    placeholder={dict.materialGen.sizePh}
+                    className={inputClass}
+                  />
+                </label>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void handleGenerateMaterialImages()}
+                disabled={materialGenState.loading}
+                className={`${primaryButtonClass} mt-4`}
+              >
+                {materialGenState.loading ? dict.materialGen.submitting : dict.materialGen.submit}
+              </button>
+
+              {promptTemplateState.result ? (
+                <p className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">{promptTemplateState.result}</p>
+              ) : null}
+              {materialGenState.result ? (
+                <p className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">{materialGenState.result}</p>
+              ) : null}
+            </article>
+            ) : null}
 
             {activeStepId === "script" ? (
             <article id="stage-script" className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]" style={{ animationDelay: "60ms" }}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{dict.stepTag} 01</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {dict.stepTag} {String((stepMap.script?.index ?? 0) + 1).padStart(2, "0")}
+                  </p>
                   <h2 className="mt-1 text-2xl font-semibold text-slate-900">{dict.script.title}</h2>
                   <p className="mt-2 text-sm text-slate-600">{dict.script.desc}</p>
                 </div>
@@ -2257,7 +2825,7 @@ export default function Home() {
                     <div className="mt-2 flex flex-wrap gap-2">
                       {selectedReferenceAssets.map((asset) => (
                         <span key={`selected-ref-${asset.id}`} className="inline-flex rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-700">
-                          {asset.fileName || asset.id}
+                          {asset.fileName?.trim() || localize(locale, "未命名素材", "Untitled Asset")}
                         </span>
                       ))}
                     </div>
@@ -2419,28 +2987,43 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="mt-4">
-                <label htmlFor="script-id" className="text-sm font-semibold text-slate-700">
-                  {dict.script.scriptId}
-                </label>
-                <input
-                  id="script-id"
-                  value={scriptId}
-                  onChange={(event) => setScriptId(event.target.value)}
-                  placeholder={dict.script.scriptIdPh}
-                  className={`${inputClass} mt-1`}
-                />
-                <p className="mt-1 text-xs text-slate-500">{dict.script.scriptIdHint}</p>
-              </div>
+              <details className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+                  {localize(locale, "高级：绑定已有脚本（可选）", "Advanced: Bind Existing Script (Optional)")}
+                </summary>
+                <div className="mt-3">
+                  <label htmlFor="script-id" className="text-sm font-semibold text-slate-700">
+                    {dict.script.scriptId}
+                  </label>
+                  <input
+                    id="script-id"
+                    value={scriptId}
+                    onChange={(event) => setScriptId(event.target.value)}
+                    placeholder={dict.script.scriptIdPh}
+                    className={`${inputClass} mt-1`}
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    {localize(
+                      locale,
+                      "仅在恢复旧脚本时需要填写，常规流程可忽略。",
+                      "Only needed when restoring an existing script. You can ignore this in normal flow.",
+                    )}
+                  </p>
+                </div>
+              </details>
 
-              <ResponsePanel heading={dict.responseTitle} state={scriptState} empty={dict.responseEmpty} />
+              {scriptState.result ? (
+                <p className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">{scriptState.result}</p>
+              ) : null}
             </article>
             ) : null}
             {activeStepId === "video" ? (
             <article id="stage-video" className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]" style={{ animationDelay: "140ms" }}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{dict.stepTag} 02</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {dict.stepTag} {String((stepMap.video?.index ?? 0) + 1).padStart(2, "0")}
+                  </p>
                   <h2 className="mt-1 text-2xl font-semibold text-slate-900">{dict.video.title}</h2>
                   <p className="mt-2 text-sm text-slate-600">{dict.video.desc}</p>
                 </div>
@@ -2525,17 +3108,17 @@ export default function Home() {
               {renderJobId ? (
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3 text-xs text-slate-700">
                   <p>
-                    <span className="font-semibold text-slate-600">{dict.video.jobId}:</span> {renderJobId}
-                  </p>
-                  <p className="mt-1">
-                    <span className="font-semibold text-slate-600">{dict.video.status}:</span> {renderJobStatus || dict.queuedFallback}
+                    <span className="font-semibold text-slate-600">{dict.video.status}:</span>{" "}
+                    {toRenderStatusLabel(locale, renderJobStatus || dict.queuedFallback)}
                     {isRenderPolling ? ` · ${dict.video.polling}` : ""}
                   </p>
                   {renderProgress ? (
                     <p className="mt-1">
                       <span className="font-semibold text-slate-600">{dict.video.shotStatus}:</span>{" "}
                       {renderProgress.completed}/{renderProgress.total}
-                      {renderProgress.failed > 0 ? ` · failed ${renderProgress.failed}` : ""}
+                      {renderProgress.failed > 0
+                        ? localize(locale, ` · 失败 ${renderProgress.failed}`, ` · failed ${renderProgress.failed}`)
+                        : ""}
                     </p>
                   ) : null}
                   {renderShotStatuses.length > 0 ? (
@@ -2545,7 +3128,7 @@ export default function Home() {
                         .sort((a, b) => a.shotIndex - b.shotIndex)
                         .map((shot) => (
                           <p key={`render-shot-status-${shot.shotIndex}`} className="truncate">
-                            #{shot.shotIndex}: {shot.status}
+                            {localize(locale, "分镜", "Shot")} {shot.shotIndex}: {toRenderStatusLabel(locale, shot.status)}
                             {shot.errorMessage ? ` · ${shot.errorMessage}` : ""}
                           </p>
                         ))}
@@ -2570,21 +3153,23 @@ export default function Home() {
                     {localize(locale, "当前成片对应素材", "Assets linked to this video")}
                   </p>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {activeRenderReferenceAssets.slice(0, 8).map((asset) => (
+                    {activeRenderReferenceAssets.map((asset) => (
                       <article key={`render-ref-${asset.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
                         <button
                           type="button"
-                          onClick={() => openImagePreview(asset.url, asset.fileName || asset.id)}
+                          onClick={() => openImagePreview(asset.url, asset.fileName?.trim() || localize(locale, "未命名素材", "Untitled Asset"))}
                           className="block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-100"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={asset.url}
-                            alt={asset.fileName || asset.id}
+                            alt={asset.fileName?.trim() || localize(locale, "未命名素材", "Untitled Asset")}
                             className="h-20 w-full object-contain"
                           />
                         </button>
-                        <p className="mt-1 truncate text-[11px] font-semibold text-slate-700">{asset.fileName || asset.id}</p>
+                        <p className="mt-1 truncate text-[11px] font-semibold text-slate-700">
+                          {asset.fileName?.trim() || localize(locale, "未命名素材", "Untitled Asset")}
+                        </p>
                       </article>
                     ))}
                   </div>
@@ -2595,11 +3180,20 @@ export default function Home() {
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{dict.video.ready}</p>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    {renderVideoResults.slice(0, 8).map((item) => (
+                    {renderVideoResults.slice(0, 8).map((item, index) => (
                       <article key={`video-preview-${item.id}`} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-2">
                         <button
                           type="button"
-                          onClick={() => openVideoPreview(item.url, `${dict.video.jobId}: ${item.id}`)}
+                          onClick={() =>
+                            openVideoPreview(
+                              item.url,
+                              localize(
+                                locale,
+                                `成片预览 ${index + 1}`,
+                                `Video Preview ${index + 1}`,
+                              ),
+                            )
+                          }
                           className="group block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-900"
                         >
                           <div className="flex aspect-video items-center justify-center">
@@ -2610,14 +3204,25 @@ export default function Home() {
                         </button>
                         <div className="mt-2 flex items-center justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="truncate text-xs font-semibold text-slate-800">{item.id}</p>
+                            <p className="truncate text-xs font-semibold text-slate-800">
+                              {localize(locale, "成片预览", "Video Preview")} {index + 1}
+                            </p>
                             <p className="mt-1 truncate text-[11px] text-slate-500">
-                              {new Date(item.updatedAt).toLocaleString(locale)} · {item.status}
+                              {new Date(item.updatedAt).toLocaleString(locale)} · {toRenderStatusLabel(locale, item.status)}
                             </p>
                           </div>
                           <button
                             type="button"
-                            onClick={() => openVideoPreview(item.url, `${dict.video.jobId}: ${item.id}`)}
+                            onClick={() =>
+                              openVideoPreview(
+                                item.url,
+                                localize(
+                                  locale,
+                                  `成片预览 ${index + 1}`,
+                                  `Video Preview ${index + 1}`,
+                                ),
+                              )
+                            }
                             className="shrink-0 text-[11px] font-semibold text-teal-700 underline underline-offset-4"
                           >
                             {localize(locale, "播放", "Play")}
@@ -2629,9 +3234,105 @@ export default function Home() {
                 </div>
               ) : null}
 
-              <ResponsePanel heading={dict.responseTitle} state={renderState} empty={dict.responseEmpty} />
+              {renderState.result ? (
+                <p className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">{renderState.result}</p>
+              ) : null}
             </article>
             ) : null}
+
+            <article className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]" style={{ animationDelay: "220ms" }}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {localize(locale, "创作记录", "Creation Timeline")}
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {localize(
+                      locale,
+                      "按时间查看历史脚本与视频任务，点击即可回到对应工作步骤。",
+                      "Review script and render history in time order, and jump back to the related step.",
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 max-h-[420px] space-y-3 overflow-auto pr-1">
+                {scriptJobGroups.length > 0 ? (
+                  scriptJobGroups.map((group, groupIndex) => (
+                    <article key={`timeline-${group.key}`} className="rounded-2xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">
+                            {group.script?.title?.trim() || localize(locale, `脚本草稿 ${groupIndex + 1}`, `Script Draft ${groupIndex + 1}`)}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            {group.script
+                              ? `${new Date(group.script.updatedAt).toLocaleString(locale)} · ${group.script.generatorModel || dict.modelUnknown}`
+                              : localize(locale, "该记录仅包含视频任务。", "This record contains render jobs only.")}
+                          </p>
+                        </div>
+                        {group.script ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScriptId(group.script?.id || "");
+                              setPreferredStepId("script");
+                            }}
+                            className="shrink-0 text-[11px] font-semibold text-teal-700 underline underline-offset-4"
+                          >
+                            {localize(locale, "载入脚本", "Load Script")}
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {group.jobs.length > 0 ? (
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {group.jobs.slice(0, 6).map((job, jobIndex) => (
+                            <button
+                              key={`timeline-job-${job.id}`}
+                              type="button"
+                              onClick={() => {
+                                setRenderJobId(job.id);
+                                setRenderJobStatus(job.status);
+                                setRenderProgress(job.progress ?? null);
+                                setRenderShotStatuses([]);
+                                setActiveRenderReferenceAssets(job.referenceAssets ?? []);
+                                if (job.videoUrl) {
+                                  setRenderVideoUrl(job.videoUrl);
+                                } else {
+                                  setRenderVideoUrl("");
+                                }
+                                setRenderPollNonce((prev) => prev + 1);
+                                setPreferredStepId("video");
+                              }}
+                              className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50"
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-xs font-semibold text-slate-800">
+                                  {localize(locale, "视频任务", "Render Task")} {jobIndex + 1}
+                                </span>
+                                <span className="mt-0.5 block truncate text-[11px] text-slate-500">
+                                  {new Date(job.updatedAt).toLocaleString(locale)}
+                                </span>
+                              </span>
+                              <span className={`ml-2 inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${toRenderStatusChipClass(job.status)}`}>
+                                {toRenderStatusLabel(locale, job.status)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs text-slate-500">{localize(locale, "该脚本还没有任务。", "No render jobs for this script yet.")}</p>
+                      )}
+                    </article>
+                  ))
+                ) : (
+                  <p className="rounded-2xl border border-dashed border-slate-300 bg-white px-3 py-5 text-center text-sm text-slate-500">
+                    {localize(locale, "暂无脚本与任务历史。", "No script or render history yet.")}
+                  </p>
+                )}
+              </div>
+            </article>
           </div>
         </section>
       </main>

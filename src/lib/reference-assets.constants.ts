@@ -1,0 +1,1 @@
+export const REFERENCE_ASSET_SELECTION_LIMIT = 24;

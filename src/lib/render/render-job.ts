@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { type RenderPayload, type RenderPayloadInput, SUPPORTED_ASPECT_RATIOS } from "./render-job.types";
+import { REFERENCE_ASSET_SELECTION_LIMIT } from "../reference-assets.constants";
 
 const selectedVideoModelSchema = z.object({
   protocol: z.enum(["seedance", "google"]),
@@ -27,8 +28,8 @@ const renderPayloadSchema = z.object({
   durationSec: z.number().int().min(-1).max(60).optional(),
   firstFrameUrl: z.string().url().optional(),
   lastFrameUrl: z.string().url().optional(),
-  referenceImageUrls: z.array(z.string().url()).max(8).optional().default([]),
-  referenceAssets: z.array(referenceAssetSchema).max(8).optional().default([]),
+  referenceImageUrls: z.array(z.string().url()).max(REFERENCE_ASSET_SELECTION_LIMIT).optional().default([]),
+  referenceAssets: z.array(referenceAssetSchema).max(REFERENCE_ASSET_SELECTION_LIMIT).optional().default([]),
   requestNonce: z.string().optional(),
   provider: z.string().min(1).optional(),
   selectedVideoModel: selectedVideoModelSchema.optional(),

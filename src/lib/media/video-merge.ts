@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import ffmpegStatic from "ffmpeg-static";
 
 type MergeInput = {
   outputRoot: string;
@@ -15,15 +17,66 @@ type MergeOutput = {
   absolutePath: string;
 };
 
+type ResolveFfmpegCommandInput = {
+  env?: Record<string, string | undefined>;
+  projectBundledCommand?: string | null;
+  bundledCommand?: string | null;
+};
+
 export function resolveFfmpegCommand(
-  env: Record<string, string | undefined> = process.env,
+  input?: ResolveFfmpegCommandInput,
 ): string {
+  const env = input?.env ?? process.env;
+  const projectBundledCommand = input && "projectBundledCommand" in input
+    ? input.projectBundledCommand
+    : resolveProjectBundledFfmpegCommand();
+  const bundledCommand = input && "bundledCommand" in input ? input.bundledCommand : ffmpegStatic;
   const customPath = env.FFMPEG_PATH?.trim();
   if (customPath) {
     return customPath;
   }
 
+  if (typeof projectBundledCommand === "string" && projectBundledCommand.trim()) {
+    return projectBundledCommand.trim();
+  }
+
+  if (typeof bundledCommand === "string" && bundledCommand.trim()) {
+    return bundledCommand.trim();
+  }
+
   return "ffmpeg";
+}
+
+function resolveProjectBundledFfmpegCommand(): string | null {
+  const candidateList: string[] = [];
+  if (process.platform === "win32") {
+    if (process.arch === "x64") {
+      candidateList.push("vendor/ffmpeg/win32-x64/ffmpeg.exe");
+    }
+    candidateList.push("vendor/ffmpeg/ffmpeg.exe");
+  } else if (process.platform === "linux") {
+    if (process.arch === "x64") {
+      candidateList.push("vendor/ffmpeg/linux-x64/ffmpeg");
+    }
+    candidateList.push("vendor/ffmpeg/ffmpeg");
+  } else if (process.platform === "darwin") {
+    if (process.arch === "arm64") {
+      candidateList.push("vendor/ffmpeg/darwin-arm64/ffmpeg");
+    }
+    if (process.arch === "x64") {
+      candidateList.push("vendor/ffmpeg/darwin-x64/ffmpeg");
+    }
+    candidateList.push("vendor/ffmpeg/ffmpeg");
+  }
+
+  for (const relativePath of candidateList) {
+    const absolutePath = resolve(process.cwd(), relativePath);
+    if (existsSync(absolutePath)) {
+      return absolutePath;
+    }
+  }
+
+  return null;
 }
 
 function toFileApiUrl(storageKey: string): string {
@@ -37,7 +90,7 @@ function isSpawnENOENT(error: unknown): boolean {
 
 function toFfmpegMissingError(command: string): Error {
   return new Error(
-    `ffmpeg executable not found (${command}). Install ffmpeg and add it to PATH, or set FFMPEG_PATH in .env`,
+    `ffmpeg executable not found (${command}). Configure FFMPEG_PATH in .env, install ffmpeg in PATH, or reinstall dependencies to use bundled ffmpeg-static.`,
   );
 }
 

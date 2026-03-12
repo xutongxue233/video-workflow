@@ -8,6 +8,8 @@ import {
   createScriptGenerationService,
 } from "../../../../../lib/ai/script-generation.service";
 import { prisma } from "../../../../../lib/db/prisma";
+import { isDeletedProjectError } from "../../../../../lib/projects/workflow-project";
+import { REFERENCE_ASSET_SELECTION_LIMIT } from "../../../../../lib/reference-assets.constants";
 
 const runtimeTextModelSchema = z.object({
   protocol: z.enum(["openai", "gemini"]),
@@ -34,7 +36,7 @@ const requestSchema = z
           url: z.string().min(1),
         }),
       )
-      .max(8)
+      .max(REFERENCE_ASSET_SELECTION_LIMIT)
       .optional(),
     modelProvider: runtimeTextModelSchema.optional(),
   });
@@ -130,6 +132,10 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    if (isDeletedProjectError(error)) {
+      return NextResponse.json({ message: "project has been deleted" }, { status: 404 });
     }
 
     if (error instanceof Error) {

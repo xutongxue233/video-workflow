@@ -33,7 +33,8 @@ describe("render-job repository", () => {
         upsert: vi.fn().mockResolvedValue({}),
       },
       project: {
-        upsert: vi.fn().mockResolvedValue({}),
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({}),
       },
       renderJob: {
         findUnique,
@@ -69,7 +70,8 @@ describe("render-job repository", () => {
         upsert: vi.fn().mockResolvedValue({}),
       },
       project: {
-        upsert: vi.fn().mockResolvedValue({}),
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({}),
       },
       renderJob: {
         findUnique,
@@ -114,7 +116,8 @@ describe("render-job repository", () => {
         upsert: vi.fn().mockResolvedValue({}),
       },
       project: {
-        upsert: vi.fn().mockResolvedValue({}),
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({}),
       },
       renderJob: {
         findUnique,

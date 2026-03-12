@@ -6,12 +6,13 @@ import { buildRenderPayload } from "../../../../../lib/render/render-job";
 import { createPrismaRenderJobRepository } from "../../../../../lib/render/render-job.repository";
 import { parseStoryboardProgress } from "../../../../../lib/render/storyboard-progress";
 import { buildRenderQueueJobOptions, getRenderQueue } from "../../../../../lib/queue/render-queue";
+import { REFERENCE_ASSET_SELECTION_LIMIT } from "../../../../../lib/reference-assets.constants";
 
 const retryBodySchema = z.object({
   durationSec: z.number().int().min(-1).max(60).optional(),
   firstFrameUrl: z.string().url().optional(),
   lastFrameUrl: z.string().url().optional(),
-  referenceImageUrls: z.array(z.string().url()).max(8).optional(),
+  referenceImageUrls: z.array(z.string().url()).max(REFERENCE_ASSET_SELECTION_LIMIT).optional(),
   referenceAssets: z.array(
     z.object({
       id: z.string().min(1),
@@ -19,7 +20,7 @@ const retryBodySchema = z.object({
       fileName: z.string().min(1).nullable().optional(),
       url: z.string().url(),
     }),
-  ).max(8).optional(),
+  ).max(REFERENCE_ASSET_SELECTION_LIMIT).optional(),
   requestNonce: z.string().optional(),
   selectedVideoModel: z
     .object({
@@ -112,6 +113,20 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
+    const visibleJob = await prisma.renderJob.findFirst({
+      where: {
+        id,
+        project: {
+          deletedAt: null,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!visibleJob) {
+      return NextResponse.json({ message: "Render job not found" }, { status: 404 });
+    }
+
     const body = await parseRetryBody(request);
 
     const repository = createPrismaRenderJobRepository(prisma);

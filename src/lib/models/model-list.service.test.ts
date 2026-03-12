@@ -37,6 +37,36 @@ describe("model-list service", () => {
     ]);
   });
 
+  it("fetches models via seedream protocol with openai-compatible endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: "doubao-seedream-5.0-lite" },
+          { id: "doubao-seedream-4.5" },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchProviderModelList({
+      protocol: "seedream",
+      baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "test-key",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("https://ark.cn-beijing.volces.com/api/v3/models", {
+      method: "GET",
+      headers: {
+        Authorization: "Bearer test-key",
+      },
+    });
+    expect(result).toEqual([
+      { id: "doubao-seedream-5.0-lite", label: "doubao-seedream-5.0-lite" },
+      { id: "doubao-seedream-4.5", label: "doubao-seedream-4.5" },
+    ]);
+  });
+
   it("fetches models via gemini-compatible protocol", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

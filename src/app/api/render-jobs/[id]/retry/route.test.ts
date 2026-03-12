@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const { renderJobFindFirst } = vi.hoisted(() => ({
+  renderJobFindFirst: vi.fn(),
+}));
+
 vi.mock("../../../../../lib/render/render-job.repository", () => ({
   createPrismaRenderJobRepository: vi.fn(),
 }));
@@ -7,6 +11,14 @@ vi.mock("../../../../../lib/render/render-job.repository", () => ({
 vi.mock("../../../../../lib/queue/render-queue", () => ({
   getRenderQueue: vi.fn(),
   buildRenderQueueJobOptions: vi.fn(),
+}));
+
+vi.mock("../../../../../lib/db/prisma", () => ({
+  prisma: {
+    renderJob: {
+      findFirst: renderJobFindFirst,
+    },
+  },
 }));
 
 import { buildRenderQueueJobOptions, getRenderQueue } from "../../../../../lib/queue/render-queue";
@@ -22,6 +34,8 @@ describe("/api/render-jobs/[id]/retry route", () => {
   });
 
   it("returns 404 when render job is missing", async () => {
+    renderJobFindFirst.mockResolvedValue({ id: "missing" });
+
     vi.mocked(createPrismaRenderJobRepository).mockReturnValue({
       findById: vi.fn().mockResolvedValue(null),
       markRunning: vi.fn(),
@@ -47,6 +61,7 @@ describe("/api/render-jobs/[id]/retry route", () => {
 
   it("returns existing result when video already exists and skips enqueue", async () => {
     const add = vi.fn();
+    renderJobFindFirst.mockResolvedValue({ id: "job_done" });
 
     vi.mocked(createPrismaRenderJobRepository).mockReturnValue({
       findById: vi.fn().mockResolvedValue({
@@ -88,6 +103,7 @@ describe("/api/render-jobs/[id]/retry route", () => {
 
   it("enqueues retry with queue job id and returns accepted", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
+    renderJobFindFirst.mockResolvedValue({ id: "job_failed" });
 
     vi.spyOn(Date, "now").mockReturnValue(1710000000000);
     const markRunning = vi.fn().mockResolvedValue(undefined);
@@ -153,6 +169,7 @@ describe("/api/render-jobs/[id]/retry route", () => {
   it("allows retry for running storyboard-complete job without final video", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const markRunning = vi.fn().mockResolvedValue(undefined);
+    renderJobFindFirst.mockResolvedValue({ id: "job_running_stuck" });
 
     vi.spyOn(Date, "now").mockReturnValue(1710000000000);
     vi.mocked(createPrismaRenderJobRepository).mockReturnValue({

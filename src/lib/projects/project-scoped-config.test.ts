@@ -45,6 +45,7 @@ const SAMPLE_CONFIG: ProjectScopedConfig = {
   voiceStyle: "energetic",
   renderAspectRatio: "9:16",
   selectedTextProviderId: "txt_1",
+  selectedImageProviderId: "img_1",
   selectedVideoProviderId: "vid_1",
   selectedReferenceAssetIds: ["asset_1"],
 };

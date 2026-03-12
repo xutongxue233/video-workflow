@@ -53,10 +53,12 @@ model Project {
   teamId      String
   name        String
   description String?
+  deletedAt   DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   assets      Asset[]
+  promptTemplates PromptTemplate[]
   scripts     Script[]
   renderJobs  RenderJob[]
   videos      Video[]
@@ -126,4 +128,16 @@ model Video {
   createdAt        DateTime   @default(now())
   project          Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   renderJob        RenderJob? @relation(fields: [renderJobId], references: [id], onDelete: SetNull)
+}
+
+model PromptTemplate {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  prompt    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, updatedAt])
 }

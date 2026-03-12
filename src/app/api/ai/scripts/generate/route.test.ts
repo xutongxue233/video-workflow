@@ -73,4 +73,38 @@ describe("/api/ai/scripts/generate route", () => {
     expect(response.status).toBe(422);
     expect(json.message).toContain("OpenAI-compatible request failed");
   });
+
+  it("accepts up to 24 reference assets in request payload", async () => {
+    vi.stubEnv("OPENAI_COMPAT_BASE_URL", "");
+    vi.stubEnv("OPENAI_COMPAT_API_KEY", "");
+    vi.stubEnv("OPENAI_SCRIPT_MODEL", "");
+
+    const request = new Request("http://localhost/api/ai/scripts/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        projectId: "proj_1",
+        productName: "Miniature Dragon",
+        sellingPoints: ["high detail"],
+        targetAudience: "tabletop gamers",
+        tone: "energetic",
+        durationSec: 30,
+        contentLanguage: "zh-CN",
+        referenceAssets: Array.from({ length: 24 }, (_, index) => ({
+          id: `asset_${index + 1}`,
+          projectId: "proj_1",
+          fileName: `asset-${index + 1}.png`,
+          url: `https://img.example.com/asset-${index + 1}.png`,
+        })),
+      }),
+    });
+
+    const response = await POST(request);
+    const json = (await response.json()) as { message?: string };
+
+    expect(response.status).toBe(422);
+    expect(json.message).toContain("No text model configured");
+  });
 });
