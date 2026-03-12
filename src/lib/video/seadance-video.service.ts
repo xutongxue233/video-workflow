@@ -24,6 +24,11 @@ const videoStatusResponseSchema = z.object({
 });
 
 export type SeaDanceStatus = "queued" | "running" | "succeeded" | "failed";
+export type SeaDanceImageRole = "first_frame" | "last_frame" | "reference_image";
+export type SeaDanceImageInput = {
+  url: string;
+  role?: SeaDanceImageRole;
+};
 
 export type SeaDanceClient = {
   createVideoJob(input: {
@@ -31,6 +36,9 @@ export type SeaDanceClient = {
     prompt: string;
     aspectRatio: "9:16" | "16:9";
     imageUrls: string[];
+    imageInputs?: SeaDanceImageInput[];
+    durationSec: number;
+    watermark: boolean;
   }): Promise<{ externalJobId: string; status: SeaDanceStatus }>;
   getVideoJob(externalJobId: string): Promise<{
     status: SeaDanceStatus;
@@ -66,7 +74,65 @@ function resolveApiBase(baseURL: string): string {
   return `${normalizedBaseURL}/api/v3`;
 }
 
-function buildContentInput(prompt: string, imageUrls: string[]) {
+function isSeedance15ProModel(model: string): boolean {
+  return /seedance-1-5-pro/i.test(model);
+}
+
+function normalizeDurationForModel(model: string, durationSec?: number): number {
+  const normalized =
+    typeof durationSec === "number" && Number.isFinite(durationSec)
+      ? Math.floor(durationSec)
+      : undefined;
+
+  if (isSeedance15ProModel(model)) {
+    if (normalized == null) {
+      return -1;
+    }
+
+    if (normalized === -1) {
+      return -1;
+    }
+
+    return Math.max(4, Math.min(12, normalized));
+  }
+
+  if (normalized == null || normalized < 2) {
+    return 5;
+  }
+
+  return Math.max(2, Math.min(12, normalized));
+}
+
+function isDataImageUrl(value: string): boolean {
+  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(value);
+}
+
+async function toDataImageUrl(url: string): Promise<string> {
+  if (isDataImageUrl(url)) {
+    return url;
+  }
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      return url;
+    }
+
+    const contentTypeHeader = response.headers.get("content-type");
+    const contentType = contentTypeHeader?.split(";")[0]?.trim().toLowerCase() ?? "";
+
+    if (!contentType.startsWith("image/")) {
+      return url;
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return `data:${contentType};base64,${bytes.toString("base64")}`;
+  } catch {
+    return url;
+  }
+}
+
+async function buildContentInput(prompt: string, imageInputs: SeaDanceImageInput[]) {
   const content: Array<
     | {
         type: "text";
@@ -74,7 +140,7 @@ function buildContentInput(prompt: string, imageUrls: string[]) {
       }
     | {
         type: "image_url";
-        role: "reference";
+        role?: SeaDanceImageRole;
         image_url: {
           url: string;
         };
@@ -86,12 +152,13 @@ function buildContentInput(prompt: string, imageUrls: string[]) {
     text: prompt,
   });
 
-  for (const imageUrl of imageUrls) {
+  for (const imageInput of imageInputs) {
+    const encodedUrl = await toDataImageUrl(imageInput.url);
     content.push({
       type: "image_url",
-      role: "reference",
+      role: imageInput.role,
       image_url: {
-        url: imageUrl,
+        url: encodedUrl,
       },
     });
   }
@@ -130,6 +197,8 @@ export function createSeaDanceVideoService(deps: {
       prompt: string;
       aspectRatio: "9:16" | "16:9";
       imageUrls: string[];
+      imageInputs?: SeaDanceImageInput[];
+      durationSec?: number;
     }): Promise<{
       externalJobId: string;
       status: SeaDanceStatus;
@@ -140,6 +209,9 @@ export function createSeaDanceVideoService(deps: {
         prompt: input.prompt,
         aspectRatio: input.aspectRatio,
         imageUrls: input.imageUrls,
+        imageInputs: input.imageInputs,
+        durationSec: normalizeDurationForModel(deps.model, input.durationSec),
+        watermark: false,
       });
 
       const startedAt = Date.now();
@@ -180,6 +252,14 @@ export function createOpenAICompatibleSeaDanceClient(config: {
 
   return {
     async createVideoJob(input) {
+      const imageInputs =
+        input.imageInputs && input.imageInputs.length > 0
+          ? input.imageInputs
+          : input.imageUrls.map((url) => ({
+              url,
+              role: "reference_image" as const,
+            }));
+
       const response = await fetch(createTaskUrl, {
         method: "POST",
         headers: {
@@ -188,8 +268,10 @@ export function createOpenAICompatibleSeaDanceClient(config: {
         },
         body: JSON.stringify({
           model: input.model,
-          content: buildContentInput(input.prompt, input.imageUrls),
+          content: await buildContentInput(input.prompt, imageInputs),
           ratio: input.aspectRatio,
+          duration: input.durationSec,
+          watermark: input.watermark,
         }),
       });
 

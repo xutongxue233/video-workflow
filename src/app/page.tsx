@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
-  WORKFLOW_DEFAULT_PROJECT_ID,
   buildProjectDetailPath,
 } from "@/lib/projects/project-navigation";
 
@@ -41,7 +40,6 @@ type Dict = {
   cardsTitle: string;
   cardsHint: string;
   projectCount: (count: number) => string;
-  empty: string;
   open: string;
   updated: string;
   assets: string;
@@ -75,7 +73,6 @@ const TEXT: Record<Locale, Dict> = {
     cardsTitle: "项目列表",
     cardsHint: "点击项目卡片进入工作台，或使用“新增项目”卡片快速创建。",
     projectCount: (count) => `${count} 个项目`,
-    empty: "暂无项目，先创建一个开始。",
     open: "进入项目",
     updated: "更新时间",
     assets: "素材",
@@ -107,7 +104,6 @@ const TEXT: Record<Locale, Dict> = {
     cardsTitle: "Projects",
     cardsHint: "Open any project card, or use the add card to create one quickly.",
     projectCount: (count) => `${count} Project${count === 1 ? "" : "s"}`,
-    empty: "No projects yet. Create one to get started.",
     open: "Open Project",
     updated: "Updated",
     assets: "Assets",
@@ -473,21 +469,6 @@ export default function Home() {
                 </Link>
               </article>
             ))}
-          </div>
-
-          {sortedProjects.length === 0 ? (
-            <p className="mt-3 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-5 text-sm text-slate-600">
-              {dict.empty}
-            </p>
-          ) : null}
-
-          <div className="mt-4">
-            <Link
-              href={buildProjectDetailPath(WORKFLOW_DEFAULT_PROJECT_ID)}
-              className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-            >
-              {locale === "zh-CN" ? "进入默认项目" : "Open Default Project"}
-            </Link>
           </div>
         </section>
       </main>

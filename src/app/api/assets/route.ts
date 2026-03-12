@@ -13,6 +13,13 @@ const assetService = createAssetService({
   repository: createPrismaAssetRepository(prisma),
 });
 
+function normalizeAssetUrl(url: string): string {
+  if (url.startsWith("/files/")) {
+    return `/api/files/${url.slice("/files/".length)}`;
+  }
+  return url;
+}
+
 function parseLimit(raw: string | null, fallback = 60): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
@@ -42,7 +49,15 @@ export async function GET(request: Request) {
     },
   });
 
-  return NextResponse.json({ items }, { status: 200 });
+  return NextResponse.json(
+    {
+      items: items.map((item) => ({
+        ...item,
+        url: normalizeAssetUrl(item.url),
+      })),
+    },
+    { status: 200 },
+  );
 }
 
 export async function POST(request: Request) {
@@ -67,7 +82,13 @@ export async function POST(request: Request) {
       content,
     });
 
-    return NextResponse.json(asset, { status: 201 });
+    return NextResponse.json(
+      {
+        ...asset,
+        url: normalizeAssetUrl(asset.url),
+      },
+      { status: 201 },
+    );
   } catch (error) {
     if (error instanceof Error && error.message.includes("empty")) {
       return NextResponse.json({ message: error.message }, { status: 400 });

@@ -52,7 +52,7 @@ export function createAssetService(deps: {
         projectId: input.projectId,
         fileName: input.fileName,
         storageKey: stored.storageKey,
-        url: `/files/${stored.storageKey}`,
+        url: `/api/files/${stored.storageKey}`,
       });
     },
   };

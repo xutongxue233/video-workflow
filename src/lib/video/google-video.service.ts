@@ -8,6 +8,8 @@ export type GoogleVideoClient = {
     prompt: string;
     aspectRatio: "9:16" | "16:9";
     imageUrls: string[];
+    imageInputs?: Array<{ url: string; role?: "first_frame" | "last_frame" | "reference_image" }>;
+    durationSec?: number;
   }): Promise<{ externalJobId: string; status: GoogleVideoStatus }>;
   getVideoJob(externalJobId: string): Promise<{
     status: GoogleVideoStatus;
@@ -105,6 +107,8 @@ export function createGoogleVideoService(deps: {
       prompt: string;
       aspectRatio: "9:16" | "16:9";
       imageUrls: string[];
+      imageInputs?: Array<{ url: string; role?: "first_frame" | "last_frame" | "reference_image" }>;
+      durationSec?: number;
     }): Promise<{
       externalJobId: string;
       status: GoogleVideoStatus;
@@ -115,6 +119,7 @@ export function createGoogleVideoService(deps: {
         prompt: input.prompt,
         aspectRatio: input.aspectRatio,
         imageUrls: input.imageUrls,
+        durationSec: input.durationSec,
       });
 
       const startedAt = Date.now();

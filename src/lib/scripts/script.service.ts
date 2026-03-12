@@ -12,6 +12,7 @@ type ScriptRecord = {
   hook: string | null;
   sellingPoints: string | null;
   storyboard: string | null;
+  structuredJson: string | null;
   cta: string | null;
 };
 
@@ -21,6 +22,7 @@ type CreateScriptInput = {
   hook?: string;
   sellingPoints?: string;
   storyboard?: string;
+  structuredJson?: string;
   cta?: string;
 };
 
@@ -29,6 +31,7 @@ type UpdateScriptInput = {
   hook?: string;
   sellingPoints?: string;
   storyboard?: string;
+  structuredJson?: string;
   cta?: string;
 };
 
@@ -44,6 +47,7 @@ const createSchema = z.object({
   hook: z.string().optional(),
   sellingPoints: z.string().optional(),
   storyboard: z.string().optional(),
+  structuredJson: z.string().optional(),
   cta: z.string().optional(),
 });
 
@@ -53,6 +57,7 @@ const updateSchema = z
     hook: z.string().optional(),
     sellingPoints: z.string().optional(),
     storyboard: z.string().optional(),
+    structuredJson: z.string().optional(),
     cta: z.string().optional(),
   })
   .refine((input) => Object.keys(input).length > 0, {
@@ -91,6 +96,7 @@ export function createPrismaScriptRepository(
           hook: input.hook,
           sellingPoints: input.sellingPoints,
           storyboard: input.storyboard,
+          structuredJson: input.structuredJson,
           cta: input.cta,
         },
       });

@@ -23,7 +23,7 @@ const requestSchema = z
     sellingPoints: z.array(z.string().min(1)).min(1),
     targetAudience: z.string().min(1),
     tone: z.string().min(1),
-    durationSec: z.number().int().positive().max(180),
+    durationSec: z.number().int().positive().max(60),
     contentLanguage: z.enum(["zh-CN", "en-US"]).optional(),
     referenceAssets: z
       .array(

@@ -155,6 +155,57 @@ describe("script generation service", () => {
     expect(promptPayload.language).toBe("en-US");
   });
 
+  it("uses storefront panorama storyboard prompt with required walk-in-traffic claim", async () => {
+    const completionClient = {
+      createJsonCompletion: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          title: "门头展示短片",
+          hook: "门头亮起来，客户就会走进来。",
+          voiceover: "不用发传单也客流不断，全天自动吸引路过人群。",
+          cta: "到店体验门头升级方案。",
+          shots: [
+            {
+              index: 1,
+              durationSec: 8,
+              visual: "晨光下门头全景推进，招牌发光",
+              caption: "第一眼就想进店",
+              camera: "无人机缓慢前推",
+            },
+          ],
+        }),
+      ),
+    };
+
+    const service = createScriptGenerationService({
+      completionClient,
+      repository: {
+        createGeneratedScript: vi.fn().mockResolvedValue({
+          id: "scr_1",
+        }),
+      },
+      model: "gpt-script-v1",
+    });
+
+    await service.generateAndSave({
+      projectId: "proj_1",
+      productName: "社区烘焙店门头",
+      sellingPoints: ["夜间高可见", "自然引流"],
+      targetAudience: "社区路过行人",
+      tone: "真实可信",
+      durationSec: 30,
+      contentLanguage: "zh-CN",
+    });
+
+    const call = completionClient.createJsonCompletion.mock.calls[0]?.[0] as {
+      systemPrompt?: string;
+    };
+    const systemPrompt = call.systemPrompt ?? "";
+
+    expect(systemPrompt).toContain("storefront");
+    expect(systemPrompt).toContain("panoramic");
+    expect(systemPrompt).toContain("不用发传单也客流不断");
+  });
+
   it("includes reference assets in generation prompt payload", async () => {
     const completionClient = {
       createJsonCompletion: vi.fn().mockResolvedValue(

@@ -15,7 +15,7 @@ describe("asset service", () => {
       createAsset: vi.fn().mockResolvedValue({
         id: "asset_1",
         projectId: "proj_1",
-        url: "/files/assets/abc.png",
+        url: "/api/files/assets/abc.png",
         storageKey: "assets/abc.png",
         fileName: "hero.png",
       }),
@@ -31,7 +31,13 @@ describe("asset service", () => {
 
     expect(storage.saveBuffer).toHaveBeenCalledOnce();
     expect(repository.createAsset).toHaveBeenCalledOnce();
-    expect(result.url).toBe("/files/assets/abc.png");
+    expect(repository.createAsset).toHaveBeenCalledWith({
+      projectId: "proj_1",
+      fileName: "hero.png",
+      storageKey: "assets/abc.png",
+      url: "/api/files/assets/abc.png",
+    });
+    expect(result.url).toBe("/api/files/assets/abc.png");
   });
 
   it("rejects empty file content", async () => {

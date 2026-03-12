@@ -12,7 +12,7 @@ const generationInputSchema = z.object({
   sellingPoints: z.array(z.string().min(1)).min(1),
   targetAudience: z.string().min(1),
   tone: z.string().min(1),
-  durationSec: z.number().int().positive().max(180),
+  durationSec: z.number().int().positive().max(60),
   contentLanguage: z.enum(["zh-CN", "en-US"]).default("zh-CN"),
   referenceAssets: z
     .array(
@@ -62,10 +62,16 @@ type ScriptGenerationRepository = {
 
 function buildSystemPrompt(): string {
   return [
-    "You are a short-video copywriting and storyboard planner for 3D printing models.",
+    "You are a short-video copywriter and storyboard planner for offline storefront marketing.",
+    "Primary style: panoramic dynamic storefront showcase (门头全景动态展示).",
+    "Focus on core customer value, trust signal, and walk-in conversion.",
+    "For zh-CN outputs, include the exact phrase \"不用发传单也客流不断\" at least once in hook, voiceover, caption, or cta.",
+    "For en-US outputs, include an equivalent claim such as \"Steady walk-in traffic without handing out flyers.\"",
+    "Use only realistic, business-safe claims. Do not fabricate impossible data, awards, or guarantees.",
     "Return strictly valid JSON only.",
     "All user-facing text fields must be in the requested language.",
     "Use provided reference assets as visual guidance when available.",
+    "Shots must align with durationSec and read as a coherent storefront storyboard: opening full-facade panorama, value-focused highlights, then conversion-driven close.",
     "Output shape: {title,hook,voiceover,cta,shots:[{index,durationSec,visual,caption,camera}]}",
     "No markdown. No code fences. No additional keys.",
   ].join(" ");
@@ -74,13 +80,20 @@ function buildSystemPrompt(): string {
 function buildUserPrompt(input: z.infer<typeof generationInputSchema>): string {
   return JSON.stringify(
     {
-      task: "Generate short-video script and storyboard",
+      task: "Generate storefront panorama short-video script and storyboard",
       productName: input.productName,
       sellingPoints: input.sellingPoints,
       targetAudience: input.targetAudience,
       tone: input.tone,
       durationSec: input.durationSec,
       language: input.contentLanguage,
+      campaignCoreValue: "通过门头展示强化信任感与自然到店转化",
+      requiredSellingClaim: "不用发传单也客流不断",
+      shotDirection: [
+        "起镜以门头全景动态展示建立第一眼吸引力",
+        "中段突出核心价值与人流感知",
+        "结尾给出到店行动引导",
+      ],
       referenceAssets: input.referenceAssets.map((asset) => ({
         id: asset.id,
         projectId: asset.projectId,
