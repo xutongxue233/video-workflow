@@ -35,6 +35,7 @@ type Dict = {
   createButton: string;
   cardsTitle: string;
   cardsHint: string;
+  projectCount: (count: number) => string;
   empty: string;
   open: string;
   updated: string;
@@ -63,6 +64,7 @@ const TEXT: Record<Locale, Dict> = {
     createButton: "创建并进入",
     cardsTitle: "项目列表",
     cardsHint: "点击任意卡片进入详细配置与生成工作台。",
+    projectCount: (count) => `${count} 个项目`,
     empty: "暂无项目，先创建一个开始。",
     open: "进入项目",
     updated: "更新时间",
@@ -89,6 +91,7 @@ const TEXT: Record<Locale, Dict> = {
     createButton: "Create & Open",
     cardsTitle: "Projects",
     cardsHint: "Click a card to open the detailed config and generation workspace.",
+    projectCount: (count) => `${count} Project${count === 1 ? "" : "s"}`,
     empty: "No projects yet. Create one to get started.",
     open: "Open Project",
     updated: "Updated",
@@ -329,7 +332,7 @@ export default function Home() {
               <p className="mt-1 text-sm text-slate-600">{dict.cardsHint}</p>
             </div>
             <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-slate-700">
-              {sortedProjects.length} Projects
+              {dict.projectCount(sortedProjects.length)}
             </span>
           </div>
 

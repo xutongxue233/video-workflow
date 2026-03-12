@@ -106,6 +106,14 @@ type ProjectScopedConfig = {
 
 type Dict = {
   localeLabel: string;
+  modelSettings: string;
+  backToHome: string;
+  textModelProvider: string;
+  videoModelProvider: string;
+  manualModel: string;
+  modelUnknown: string;
+  providerUnknown: string;
+  queuedFallback: string;
   languages: Record<Locale, string>;
   heroTag: string;
   heroTitle: string;
@@ -268,6 +276,14 @@ function saveProjectScopedConfig(projectId: string, config: ProjectScopedConfig)
 const TEXT: Record<Locale, Dict> = {
   "zh-CN": {
     localeLabel: "界面语言",
+    modelSettings: "模型配置",
+    backToHome: "返回首页",
+    textModelProvider: "文本模型供应商",
+    videoModelProvider: "视频模型供应商",
+    manualModel: "手动模型",
+    modelUnknown: "模型未知",
+    providerUnknown: "供应商未知",
+    queuedFallback: "排队中",
     languages: { "zh-CN": "中文", "en-US": "English" },
     heroTag: "3D 打印短视频流程",
     heroTitle: "OpenAI + SeaDance 创作控制台",
@@ -292,7 +308,7 @@ const TEXT: Record<Locale, Dict> = {
     stepHints: {
       asset: "上传后显示预览。",
       script: "先生成再编辑。",
-      video: "有 Script ID 后可入队。",
+      video: "有脚本 ID 后可入队。",
     },
     stepState: {
       done: "已完成",
@@ -329,14 +345,14 @@ const TEXT: Record<Locale, Dict> = {
       hook: "开场钩子",
       sellPoints: "卖点文案",
       storyboard: "分镜",
-      cta: "CTA",
+      cta: "行动号召（CTA）",
       save: "保存脚本编辑",
       saving: "保存中...",
-      scriptId: "Script ID",
+      scriptId: "脚本 ID",
       scriptIdPh: "scr_xxx",
-      scriptIdHint: "也可以手动填入已有 Script ID 继续后续流程。",
+      scriptIdHint: "也可以手动填入已有脚本 ID 继续后续流程。",
       needPoints: "请至少填写一个卖点。",
-      needScriptId: "请先生成脚本或输入已有 Script ID。",
+      needScriptId: "请先生成脚本或输入已有脚本 ID。",
     },
     video: {
       title: "视频任务入队",
@@ -348,8 +364,8 @@ const TEXT: Record<Locale, Dict> = {
       horizontal: "16:9（横屏）",
       submit: "提交 SeaDance 任务",
       submitting: "入队中...",
-      needScriptId: "缺少 Script ID，无法生成视频。",
-      hint: "需要先在步骤 2 获取有效的 Script ID。",
+      needScriptId: "缺少脚本 ID，无法生成视频。",
+      hint: "需要先在步骤 2 获取有效的脚本 ID。",
       jobId: "任务 ID",
       status: "任务状态",
       polling: "正在查询任务状态...",
@@ -358,6 +374,14 @@ const TEXT: Record<Locale, Dict> = {
   },
   "en-US": {
     localeLabel: "Interface Language",
+    modelSettings: "Model Settings",
+    backToHome: "Back to Home",
+    textModelProvider: "Text Model Provider",
+    videoModelProvider: "Video Model Provider",
+    manualModel: "manual model",
+    modelUnknown: "model n/a",
+    providerUnknown: "provider n/a",
+    queuedFallback: "QUEUED",
     languages: { "zh-CN": "中文", "en-US": "English" },
     heroTag: "3D Print Short-Video Workflow",
     heroTitle: "OpenAI + SeaDance Studio Console",
@@ -1183,13 +1207,13 @@ export default function Home() {
                 href="/settings"
                 className="mt-2 inline-flex h-9 w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
               >
-                模型配置 / Model Settings
+                {dict.modelSettings}
               </Link>
               <Link
                 href="/"
                 className="mt-2 inline-flex h-9 w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
               >
-                返回项目卡片 / Project Cards
+                {dict.backToHome}
               </Link>
             </div>
           </div>
@@ -1360,7 +1384,7 @@ export default function Home() {
 	                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50"
 	                        >
 	                          <p className="text-xs font-semibold text-slate-800">{item.title || item.id}</p>
-	                          <p className="mt-1 text-[11px] text-slate-500">{item.id} · {item.generatorModel || "model n/a"}</p>
+	                          <p className="mt-1 text-[11px] text-slate-500">{item.id} · {item.generatorModel || dict.modelUnknown}</p>
 	                        </button>
 	                      ))
 	                    ) : (
@@ -1384,7 +1408,7 @@ export default function Home() {
 	                        >
 	                          <p className="text-xs font-semibold text-slate-800">{item.id}</p>
 	                          <p className="mt-1 text-[11px] text-slate-500">
-	                            {item.status} · {item.provider || "provider n/a"}
+	                            {item.status} · {item.provider || dict.providerUnknown}
 	                          </p>
 	                        </button>
 	                      ))
@@ -1595,7 +1619,7 @@ export default function Home() {
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">Text Model Provider</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{dict.textModelProvider}</p>
                   {availableTextProviders.length > 0 ? (
                     <select
                       value={resolvedTextProviderId}
@@ -1604,19 +1628,17 @@ export default function Home() {
                     >
                       {availableTextProviders.map((provider) => (
                         <option key={`text-provider-${provider.id}`} value={provider.id}>
-                          {provider.name} | {provider.selectedModelId || provider.manualModelId || "manual model"}
+                          {provider.name} | {provider.selectedModelId || provider.manualModelId || dict.manualModel}
                         </option>
                       ))}
                     </select>
                   ) : (
                     <p className="mt-2 text-xs text-slate-600">
-                      未发现可用文本模型，请先在
-                      {" "}
+                      {localize(locale, "未发现可用文本模型，请先在", "No text model available. Enable one in ")}
                       <Link href="/settings" className="font-semibold text-teal-700 underline underline-offset-4">
-                        设置页
+                        {localize(locale, "设置页", "Settings")}
                       </Link>
-                      {" "}
-                      启用文本供应商。
+                      {localize(locale, "启用文本供应商。", ".")}
                     </p>
                   )}
                 </div>
@@ -1766,7 +1788,7 @@ export default function Home() {
 
               <div className="mt-5 space-y-3">
                 <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">Video Model Provider</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{dict.videoModelProvider}</p>
                   {availableVideoProviders.length > 0 ? (
                     <select
                       value={resolvedVideoProviderId}
@@ -1775,19 +1797,17 @@ export default function Home() {
                     >
                       {availableVideoProviders.map((provider) => (
                         <option key={`video-provider-${provider.id}`} value={provider.id}>
-                          {provider.name} | {provider.selectedModelId || provider.manualModelId || "manual model"}
+                          {provider.name} | {provider.selectedModelId || provider.manualModelId || dict.manualModel}
                         </option>
                       ))}
                     </select>
                   ) : (
                     <p className="mt-2 text-xs text-slate-600">
-                      未发现可用视频模型，请先在
-                      {" "}
+                      {localize(locale, "未发现可用视频模型，请先在", "No video model available. Enable one in ")}
                       <Link href="/settings" className="font-semibold text-teal-700 underline underline-offset-4">
-                        设置页
+                        {localize(locale, "设置页", "Settings")}
                       </Link>
-                      {" "}
-                      启用视频供应商。
+                      {localize(locale, "启用视频供应商。", ".")}
                     </p>
                   )}
                 </div>
@@ -1845,7 +1865,7 @@ export default function Home() {
                     <span className="font-semibold text-slate-600">{dict.video.jobId}:</span> {renderJobId}
                   </p>
                   <p className="mt-1">
-                    <span className="font-semibold text-slate-600">{dict.video.status}:</span> {renderJobStatus || "QUEUED"}
+                    <span className="font-semibold text-slate-600">{dict.video.status}:</span> {renderJobStatus || dict.queuedFallback}
                     {isRenderPolling ? ` · ${dict.video.polling}` : ""}
                   </p>
                 </div>

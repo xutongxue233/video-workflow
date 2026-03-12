@@ -170,7 +170,7 @@ export default function ModelSettingsPage() {
 
           <div className="relative flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div className="max-w-3xl">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Model Provider Settings</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">模型供应商设置</p>
               <h1 className="mt-2 text-3xl font-semibold text-slate-900 md:text-5xl">模型供应商配置中心</h1>
               <p className="mt-3 text-sm leading-7 text-slate-600 md:text-base">
                 支持为文本、图像、视频分别配置多个供应商。默认通过 <code>/model/list</code> 拉取模型；失败时可手动填写
@@ -286,9 +286,9 @@ export default function ModelSettingsPage() {
                       }}
                       className={inputClass}
                     >
-                      <option value="text">文本（Text）</option>
-                      <option value="image">图像（Image）</option>
-                      <option value="video">视频（Video）</option>
+                      <option value="text">文本</option>
+                      <option value="image">图像</option>
+                      <option value="video">视频</option>
                     </select>
                   </label>
 
