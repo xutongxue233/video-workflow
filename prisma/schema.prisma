@@ -99,6 +99,7 @@ model RenderJob {
   provider        String?
   externalJobId   String?
   externalStatus  String?
+  referenceAssetsJson String?
   attemptCount    Int             @default(0)
   idempotencyKey  String          @unique
   status          RenderJobStatus @default(QUEUED)

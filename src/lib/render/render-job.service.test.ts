@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createRenderJobService } from "./render-job.service";
+import {
+  createRenderJobService,
+  type RenderJobRepository,
+  type RenderQueuePort,
+} from "./render-job.service";
 
 function makeQueuedJob(id: string) {
   return {
@@ -15,18 +19,42 @@ function makeQueuedJob(id: string) {
   };
 }
 
+function createRepositoryStub(overrides: Partial<RenderJobRepository> = {}): RenderJobRepository {
+  return {
+    createQueuedJob: vi.fn(),
+    findById: vi.fn(),
+    findByIdempotencyKey: vi.fn(),
+    markRunning: vi.fn(),
+    markSucceeded: vi.fn(),
+    markFailed: vi.fn(),
+    incrementAttemptCount: vi.fn(),
+    setExternalJob: vi.fn(),
+    setExternalStatus: vi.fn(),
+    getScriptStructuredJson: vi.fn(),
+    createVideoFromExternalJob: vi.fn(),
+    ...overrides,
+  };
+}
+
+function createQueueStub(overrides: Partial<RenderQueuePort> = {}): RenderQueuePort {
+  return {
+    enqueue: vi.fn(),
+    ...overrides,
+  };
+}
+
 describe("render-job service", () => {
   it("creates queued job and enqueues render task", async () => {
-    const repository = {
+    const repository = createRepositoryStub({
       createQueuedJob: vi.fn().mockResolvedValue({
         record: makeQueuedJob("job_1"),
         created: true,
       }),
       findById: vi.fn(),
-    };
-    const queue = {
+    });
+    const queue = createQueueStub({
       enqueue: vi.fn().mockResolvedValue(undefined),
-    };
+    });
 
     const service = createRenderJobService({ repository, queue });
 
@@ -45,13 +73,13 @@ describe("render-job service", () => {
   });
 
   it("returns null when job id does not exist", async () => {
-    const repository = {
+    const repository = createRepositoryStub({
       createQueuedJob: vi.fn(),
       findById: vi.fn().mockResolvedValue(null),
-    };
-    const queue = {
+    });
+    const queue = createQueueStub({
       enqueue: vi.fn(),
-    };
+    });
 
     const service = createRenderJobService({ repository, queue });
 
@@ -61,7 +89,7 @@ describe("render-job service", () => {
   });
 
   it("forwards selected runtime video model config to queue payload", async () => {
-    const repository = {
+    const repository = createRepositoryStub({
       createQueuedJob: vi.fn().mockResolvedValue({
         record: {
           ...makeQueuedJob("job_2"),
@@ -70,10 +98,10 @@ describe("render-job service", () => {
         created: true,
       }),
       findById: vi.fn(),
-    };
-    const queue = {
+    });
+    const queue = createQueueStub({
       enqueue: vi.fn().mockResolvedValue(undefined),
-    };
+    });
 
     const service = createRenderJobService({ repository, queue });
 
@@ -106,16 +134,16 @@ describe("render-job service", () => {
   });
 
   it("returns existing queued job without re-enqueuing when idempotent request is repeated", async () => {
-    const repository = {
+    const repository = createRepositoryStub({
       createQueuedJob: vi.fn().mockResolvedValue({
         record: makeQueuedJob("job_existing"),
         created: false,
       }),
       findById: vi.fn(),
-    };
-    const queue = {
+    });
+    const queue = createQueueStub({
       enqueue: vi.fn().mockResolvedValue(undefined),
-    };
+    });
 
     const service = createRenderJobService({ repository, queue });
 

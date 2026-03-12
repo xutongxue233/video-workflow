@@ -1,5 +1,5 @@
 import { buildRenderJobIdempotencyKey, buildRenderPayload } from "./render-job";
-import type { RenderPayload, RenderPayloadInput } from "./render-job.types";
+import type { RenderPayload, RenderPayloadInput, RenderReferenceAsset } from "./render-job.types";
 
 export type CreateQueuedJobInput = RenderPayload & {
   idempotencyKey: string;
@@ -25,6 +25,7 @@ export type RenderJobRecord = {
   idempotencyKey: string;
   errorMessage?: string | null;
   videoUrl?: string | null;
+  referenceAssets?: RenderReferenceAsset[];
 };
 
 export type RenderJobDto = RenderJobRecord;

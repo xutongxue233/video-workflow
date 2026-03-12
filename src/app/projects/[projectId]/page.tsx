@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
 import {
@@ -13,18 +13,33 @@ import {
 } from "@/lib/models/model-settings.local";
 import {
   WORKFLOW_DEFAULT_PROJECT_ID,
-  buildProjectDetailPath,
   normalizeProjectIdInput,
 } from "@/lib/projects/project-navigation";
+import {
+  loadProjectScopedConfig,
+  trySaveProjectScopedConfig,
+} from "@/lib/projects/project-scoped-config";
+import {
+  buildProjectScopedAssetsUrl,
+  filterMaterialAssetsByProject,
+} from "@/lib/projects/workspace-refresh";
 
 type Locale = "zh-CN" | "en-US";
-type StepId = "asset" | "script" | "video";
+type StepId = "script" | "video";
 
 type RequestState = { loading: boolean; result: string };
 type JsonRecord = Record<string, unknown>;
 
 type GeneratedShot = {
   index: number;
+  durationSec: number;
+  visual: string;
+  caption: string;
+  camera: string;
+};
+
+type EditableShot = {
+  id: string;
   durationSec: number;
   visual: string;
   caption: string;
@@ -85,23 +100,30 @@ type RenderHistoryItem = {
   provider: string | null;
   scriptId: string | null;
   videoUrl: string | null;
+  progress?: {
+    completed: number;
+    total: number;
+    failed: number;
+  } | null;
+  referenceAssets?: Array<{
+    id: string;
+    projectId: string;
+    fileName: string | null;
+    url: string;
+  }>;
   updatedAt: string;
 };
 
-type ProjectScopedConfig = {
-  generationPayload: {
-    productName: string;
-    sellingPointsText: string;
-    targetAudience: string;
-    tone: string;
-    durationSec: number;
-  };
-  contentLanguage: Locale;
-  voiceStyle: string;
-  renderAspectRatio: "9:16" | "16:9";
-  selectedTextProviderId: string;
-  selectedVideoProviderId: string;
-  selectedReferenceAssetIds: string[];
+type RenderShotStatusItem = {
+  shotIndex: number;
+  status: string;
+  errorMessage?: string;
+};
+
+type PreviewDialogState = {
+  kind: "image" | "video";
+  url: string;
+  title: string;
 };
 
 type Dict = {
@@ -191,12 +213,14 @@ type Dict = {
     jobId: string;
     status: string;
     polling: string;
+    retry: string;
+    retrying: string;
+    shotStatus: string;
     ready: string;
   };
 };
 
 const LOCALE_KEY = "video-workflow-locale";
-const PROJECT_CONFIG_KEY = "video-workflow-project-config-v1";
 const LOCALES: Locale[] = ["zh-CN", "en-US"];
 const DEFAULT_GENERATION_PAYLOAD = {
   productName: "Miniature Dragon",
@@ -209,68 +233,6 @@ const DEFAULT_VOICE_STYLE = "energetic";
 
 function localize(locale: Locale, zh: string, en: string): string {
   return locale === "zh-CN" ? zh : en;
-}
-
-function loadProjectScopedConfig(projectId: string): ProjectScopedConfig | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const raw = window.localStorage.getItem(PROJECT_CONFIG_KEY);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const value = parsed[projectId];
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return null;
-    }
-
-    const config = value as Partial<ProjectScopedConfig>;
-    if (!config.generationPayload) {
-      return null;
-    }
-
-    return {
-      generationPayload: {
-        productName: config.generationPayload.productName ?? "",
-        sellingPointsText: config.generationPayload.sellingPointsText ?? "",
-        targetAudience: config.generationPayload.targetAudience ?? "",
-        tone: config.generationPayload.tone ?? "",
-        durationSec: Number(config.generationPayload.durationSec ?? 30),
-      },
-      contentLanguage: config.contentLanguage === "en-US" ? "en-US" : "zh-CN",
-      voiceStyle: config.voiceStyle ?? DEFAULT_VOICE_STYLE,
-      renderAspectRatio: config.renderAspectRatio === "16:9" ? "16:9" : "9:16",
-      selectedTextProviderId: config.selectedTextProviderId ?? "",
-      selectedVideoProviderId: config.selectedVideoProviderId ?? "",
-      selectedReferenceAssetIds: Array.isArray(config.selectedReferenceAssetIds)
-        ? config.selectedReferenceAssetIds.filter((item) => typeof item === "string")
-        : [],
-    };
-  } catch {
-    return null;
-  }
-}
-
-function saveProjectScopedConfig(projectId: string, config: ProjectScopedConfig): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  let current: Record<string, unknown> = {};
-
-  try {
-    const raw = window.localStorage.getItem(PROJECT_CONFIG_KEY);
-    current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-  } catch {
-    current = {};
-  }
-
-  current[projectId] = config;
-  window.localStorage.setItem(PROJECT_CONFIG_KEY, JSON.stringify(current));
 }
 
 const TEXT: Record<Locale, Dict> = {
@@ -301,12 +263,10 @@ const TEXT: Record<Locale, Dict> = {
     errorPrefix: "请求失败",
     stepTag: "步骤",
     stepNames: {
-      asset: "上传素材",
       script: "生成与编辑脚本",
       video: "提交视频生成",
     },
     stepHints: {
-      asset: "上传后显示预览。",
       script: "先生成再编辑。",
       video: "有脚本 ID 后可入队。",
     },
@@ -369,6 +329,9 @@ const TEXT: Record<Locale, Dict> = {
       jobId: "任务 ID",
       status: "任务状态",
       polling: "正在查询任务状态...",
+      retry: "重试未完成分镜",
+      retrying: "重试中...",
+      shotStatus: "分镜进度",
       ready: "视频已生成",
     },
   },
@@ -399,12 +362,10 @@ const TEXT: Record<Locale, Dict> = {
     errorPrefix: "Request failed",
     stepTag: "Step",
     stepNames: {
-      asset: "Upload Asset",
       script: "Generate & Edit Script",
       video: "Queue Video Render",
     },
     stepHints: {
-      asset: "Preview appears after upload.",
       script: "Generate first, then edit.",
       video: "Queue once Script ID is available.",
     },
@@ -467,6 +428,9 @@ const TEXT: Record<Locale, Dict> = {
       jobId: "Render Job ID",
       status: "Render Status",
       polling: "Polling render status...",
+      retry: "Retry Unfinished Shots",
+      retrying: "Retrying...",
+      shotStatus: "Shot Progress",
       ready: "Video is ready",
     },
   },
@@ -504,11 +468,119 @@ function toStoryboardText(shots: GeneratedShot[]): string {
   return shots.map((shot) => `${shot.index}. ${shot.visual} | ${shot.caption} | ${shot.camera}`).join("\n");
 }
 
+function normalizeEditableShots(shots: EditableShot[]): EditableShot[] {
+  const cleaned = shots
+    .map((shot) => ({
+      ...shot,
+      durationSec: Math.max(1, Math.min(60, Math.floor(Number(shot.durationSec) || 5))),
+      visual: shot.visual.trim(),
+      caption: shot.caption.trim(),
+      camera: shot.camera.trim(),
+    }))
+    .filter((shot) => shot.visual || shot.caption || shot.camera);
+
+  if (cleaned.length > 0) {
+    return cleaned;
+  }
+
+  return [{
+    id: `shot-${Date.now()}`,
+    durationSec: 5,
+    visual: "",
+    caption: "",
+    camera: "",
+  }];
+}
+
+function toStoryboardTextFromEditableShots(shots: EditableShot[]): string {
+  const normalized = normalizeEditableShots(shots);
+  return normalized
+    .map((shot, index) => `${index + 1}. ${shot.visual} | ${shot.caption} | ${shot.camera}`)
+    .join("\n");
+}
+
+function toGeneratedShotsFromEditableShots(shots: EditableShot[]): GeneratedShot[] {
+  return normalizeEditableShots(shots).map((shot, index) => ({
+    index: index + 1,
+    durationSec: shot.durationSec,
+    visual: shot.visual || "product close-up",
+    caption: shot.caption || "",
+    camera: shot.camera || "static",
+  }));
+}
+
+function parseStoryboardToEditableShots(storyboard: string): EditableShot[] {
+  const lines = storyboard
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const parsed = lines.map((line, index) => {
+    const content = line.replace(/^\d+\.\s*/, "");
+    const [visual = "", caption = "", camera = ""] = content.split("|").map((part) => part.trim());
+    return {
+      id: `parsed-${index}-${Date.now()}`,
+      durationSec: 5,
+      visual,
+      caption,
+      camera,
+    };
+  });
+
+  return parsed.length > 0
+    ? parsed
+    : [{
+      id: `shot-${Date.now()}`,
+      durationSec: 5,
+      visual: "",
+      caption: "",
+      camera: "",
+    }];
+}
+
+function generatedShotsToEditableShots(shots: GeneratedShot[]): EditableShot[] {
+  return shots.length > 0
+    ? shots.map((shot, index) => ({
+      id: `shot-${index}-${Date.now()}`,
+      durationSec: Math.max(1, Math.min(60, Math.floor(Number(shot.durationSec) || 5))),
+      visual: shot.visual,
+      caption: shot.caption,
+      camera: shot.camera,
+    }))
+    : [{
+      id: `shot-${Date.now()}`,
+      durationSec: 5,
+      visual: "",
+      caption: "",
+      camera: "",
+    }];
+}
+
 function parseSellingPoints(input: string): string[] {
   return input
     .split(/[,\n]/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function normalizeFileUrl(url: string): string {
+  if (url.startsWith("/files/")) {
+    return `/api/files/${url.slice("/files/".length)}`;
+  }
+  return url;
+}
+
+function toAbsoluteFileUrl(url: string): string {
+  const normalized = normalizeFileUrl(url);
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  if (typeof window === "undefined") {
+    return normalized;
+  }
+
+  return new URL(normalized, window.location.origin).toString();
 }
 
 async function readJsonResponse(response: Response): Promise<unknown> {
@@ -557,9 +629,64 @@ function ResponsePanel({
   );
 }
 
+function MediaPreviewDialog({
+  preview,
+  locale,
+  onClose,
+}: {
+  preview: PreviewDialogState | null;
+  locale: Locale;
+  onClose: () => void;
+}) {
+  if (!preview) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/75 p-4" onClick={onClose} role="presentation">
+      <div
+        className="w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-700 bg-slate-950 shadow-[0_25px_80px_rgba(0,0,0,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={preview.title}
+      >
+        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+          <p className="truncate text-sm font-semibold text-slate-100">{preview.title}</p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+          >
+            {localize(locale, "关闭", "Close")}
+          </button>
+        </div>
+
+        <div className="max-h-[82vh] overflow-auto p-4">
+          {preview.kind === "image" ? (
+            <div className="flex justify-center rounded-2xl bg-slate-900 p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={preview.url} alt={preview.title} className="max-h-[74vh] w-auto max-w-full rounded-xl object-contain" />
+            </div>
+          ) : (
+            <div className="flex justify-center rounded-2xl bg-black p-2">
+              <video
+                className="max-h-[74vh] w-full rounded-xl bg-black object-contain"
+                controls
+                autoPlay
+                preload="metadata"
+                src={preview.url}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const params = useParams<{ projectId: string }>();
-  const router = useRouter();
   const routeProjectIdRaw = Array.isArray(params.projectId) ? params.projectId[0] : params.projectId;
   const routeProjectId = normalizeProjectIdInput(decodeURIComponent(routeProjectIdRaw ?? WORKFLOW_DEFAULT_PROJECT_ID));
 
@@ -581,6 +708,13 @@ export default function Home() {
     storyboard: "",
     cta: "",
   });
+  const [scriptShots, setScriptShots] = useState<EditableShot[]>(() => [{
+    id: "shot-initial",
+    durationSec: 5,
+    visual: "",
+    caption: "",
+    camera: "",
+  }]);
   const [scriptState, setScriptState] = useState<RequestState>({ loading: false, result: "" });
 
   const [voiceStyle, setVoiceStyle] = useState(DEFAULT_VOICE_STYLE);
@@ -589,6 +723,10 @@ export default function Home() {
   const [renderJobId, setRenderJobId] = useState("");
   const [renderJobStatus, setRenderJobStatus] = useState("");
   const [renderVideoUrl, setRenderVideoUrl] = useState("");
+  const [renderProgress, setRenderProgress] = useState<{ completed: number; total: number; failed: number } | null>(null);
+  const [renderShotStatuses, setRenderShotStatuses] = useState<RenderShotStatusItem[]>([]);
+  const [activeRenderReferenceAssets, setActiveRenderReferenceAssets] = useState<RenderHistoryItem["referenceAssets"]>([]);
+  const [renderPollNonce, setRenderPollNonce] = useState(0);
   const [renderAspectRatio, setRenderAspectRatio] = useState<"9:16" | "16:9">("9:16");
   const [storedModelProviders, setStoredModelProviders] = useState<StoredModelProvider[]>(() =>
     getSsrSafeInitialModelProviders(),
@@ -601,11 +739,51 @@ export default function Home() {
   const [renderHistory, setRenderHistory] = useState<RenderHistoryItem[]>([]);
   const [selectedReferenceAssetIds, setSelectedReferenceAssetIds] = useState<string[]>([]);
   const [workspaceState, setWorkspaceState] = useState<RequestState>({ loading: false, result: "" });
+  const [previewDialog, setPreviewDialog] = useState<PreviewDialogState | null>(null);
+  const [preferredStepId, setPreferredStepId] = useState<StepId>("script");
+  const [hydratedProjectId, setHydratedProjectId] = useState("");
+
+  const closePreviewDialog = useCallback(() => {
+    setPreviewDialog(null);
+  }, []);
+
+  const openImagePreview = useCallback((url: string, title: string) => {
+    setPreviewDialog({
+      kind: "image",
+      url: normalizeFileUrl(url),
+      title,
+    });
+  }, []);
+
+  const openVideoPreview = useCallback((url: string, title: string) => {
+    setPreviewDialog({
+      kind: "video",
+      url,
+      title,
+    });
+  }, []);
 
   useEffect(() => {
     document.documentElement.lang = locale;
     window.localStorage.setItem(LOCALE_KEY, locale);
   }, [locale]);
+
+  useEffect(() => {
+    if (!previewDialog) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closePreviewDialog();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closePreviewDialog, previewDialog]);
 
   useEffect(() => {
     const reloadProviders = () => {
@@ -641,7 +819,7 @@ export default function Home() {
     try {
       const [projectsResponse, assetsResponse, scriptsResponse, jobsResponse] = await Promise.all([
         fetch("/api/projects?limit=60"),
-        fetch("/api/assets?limit=120"),
+        fetch(buildProjectScopedAssetsUrl(normalizedProjectId, 120)),
         fetch(`/api/scripts?projectId=${encodeURIComponent(normalizedProjectId)}&limit=30`),
         fetch(`/api/render-jobs?projectId=${encodeURIComponent(normalizedProjectId)}&limit=30`),
       ]);
@@ -657,13 +835,28 @@ export default function Home() {
         ? (toJsonRecord(projectsData).items as ProjectSummaryItem[])
         : [];
       const materialItems = Array.isArray(toJsonRecord(assetsData).items)
-        ? (toJsonRecord(assetsData).items as MaterialAssetItem[])
+        ? filterMaterialAssetsByProject(
+          (toJsonRecord(assetsData).items as MaterialAssetItem[]).map((item) => ({
+            ...item,
+            url: normalizeFileUrl(item.url),
+          })),
+          normalizedProjectId,
+        )
         : [];
       const scriptItems = Array.isArray(toJsonRecord(scriptsData).items)
         ? (toJsonRecord(scriptsData).items as ScriptHistoryItem[])
         : [];
       const renderItems = Array.isArray(toJsonRecord(jobsData).items)
-        ? (toJsonRecord(jobsData).items as RenderHistoryItem[])
+        ? (toJsonRecord(jobsData).items as RenderHistoryItem[]).map((item) => ({
+          ...item,
+          videoUrl: item.videoUrl ? normalizeFileUrl(item.videoUrl) : item.videoUrl,
+          referenceAssets: Array.isArray(item.referenceAssets)
+            ? item.referenceAssets.map((asset) => ({
+              ...asset,
+              url: normalizeFileUrl(asset.url),
+            }))
+            : [],
+        }))
         : [];
 
       setProjects(projectItems);
@@ -730,16 +923,20 @@ export default function Home() {
     const timer = setTimeout(() => {
       const normalizedProjectId = projectId.trim();
       if (!normalizedProjectId) {
+        setHydratedProjectId("");
         return;
       }
 
-      const saved = loadProjectScopedConfig(normalizedProjectId);
+      const saved = loadProjectScopedConfig(window.localStorage, normalizedProjectId);
       if (!saved) {
         setGenerationPayload(DEFAULT_GENERATION_PAYLOAD);
         setContentLanguage(locale);
         setVoiceStyle(DEFAULT_VOICE_STYLE);
         setRenderAspectRatio("9:16");
+        setSelectedTextProviderId("");
+        setSelectedVideoProviderId("");
         setSelectedReferenceAssetIds([]);
+        setHydratedProjectId(normalizedProjectId);
         return;
       }
 
@@ -750,6 +947,7 @@ export default function Home() {
       setSelectedTextProviderId(saved.selectedTextProviderId);
       setSelectedVideoProviderId(saved.selectedVideoProviderId);
       setSelectedReferenceAssetIds(saved.selectedReferenceAssetIds);
+      setHydratedProjectId(normalizedProjectId);
     }, 0);
 
     return () => {
@@ -758,21 +956,35 @@ export default function Home() {
   }, [projectId, locale]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     const normalizedProjectId = projectId.trim();
     if (!normalizedProjectId) {
       return;
     }
 
-    saveProjectScopedConfig(normalizedProjectId, {
-      generationPayload,
-      contentLanguage,
-      voiceStyle,
-      renderAspectRatio,
-      selectedTextProviderId,
-      selectedVideoProviderId,
-      selectedReferenceAssetIds,
+    if (hydratedProjectId !== normalizedProjectId) {
+      return;
+    }
+
+    trySaveProjectScopedConfig({
+      storage: window.localStorage,
+      hydrated: true,
+      projectId: normalizedProjectId,
+      config: {
+        generationPayload,
+        contentLanguage,
+        voiceStyle,
+        renderAspectRatio,
+        selectedTextProviderId,
+        selectedVideoProviderId,
+        selectedReferenceAssetIds,
+      },
     });
   }, [
+    hydratedProjectId,
     projectId,
     generationPayload,
     contentLanguage,
@@ -821,8 +1033,61 @@ export default function Home() {
 
         const status = typeof data.status === "string" ? data.status : "";
         const videoUrl = typeof data.videoUrl === "string" ? data.videoUrl : "";
+        const progress =
+          data.progress && typeof data.progress === "object"
+            ? {
+              completed: Number((data.progress as JsonRecord).completed ?? 0),
+              total: Number((data.progress as JsonRecord).total ?? 0),
+              failed: Number((data.progress as JsonRecord).failed ?? 0),
+            }
+            : null;
+        const shotStatuses = Array.isArray(data.shotStatuses)
+          ? data.shotStatuses
+            .map((item) => ({
+              shotIndex: Number((item as JsonRecord).shotIndex ?? 0),
+              status: typeof (item as JsonRecord).status === "string" ? (item as JsonRecord).status as string : "",
+              errorMessage:
+                typeof (item as JsonRecord).errorMessage === "string"
+                  ? (item as JsonRecord).errorMessage as string
+                  : undefined,
+            }))
+            .filter((item) => Number.isFinite(item.shotIndex) && item.shotIndex > 0 && item.status.length > 0)
+          : [];
+        const polledReferenceAssets = Array.isArray(data.referenceAssets)
+          ? data.referenceAssets
+            .map((item) => {
+              const record = item as JsonRecord;
+              const id = typeof record.id === "string" ? record.id : "";
+              const projectIdValue = typeof record.projectId === "string" ? record.projectId : "";
+              const url = typeof record.url === "string" ? normalizeFileUrl(record.url) : "";
+              const fileNameValue = record.fileName;
+              const fileName =
+                typeof fileNameValue === "string"
+                  ? fileNameValue
+                  : fileNameValue == null
+                    ? null
+                    : String(fileNameValue);
+
+              if (!id || !projectIdValue || !url) {
+                return null;
+              }
+
+              return {
+                id,
+                projectId: projectIdValue,
+                url,
+                fileName,
+              };
+            })
+            .filter((item): item is NonNullable<typeof item> => Boolean(item))
+          : null;
 
         setRenderJobStatus(status);
+        setRenderProgress(progress);
+        setRenderShotStatuses(shotStatuses);
+        if (polledReferenceAssets) {
+          setActiveRenderReferenceAssets(polledReferenceAssets);
+        }
         setRenderState({ loading: false, result: formatJson(data) });
 
         if (videoUrl) {
@@ -852,28 +1117,79 @@ export default function Home() {
         clearTimeout(timer);
       }
     };
-  }, [renderJobId]);
+  }, [renderJobId, renderPollNonce]);
+
+  useEffect(() => {
+    const normalizedScriptId = scriptId.trim();
+    if (!normalizedScriptId) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch(`/api/scripts/${encodeURIComponent(normalizedScriptId)}`);
+          const data = toJsonRecord(await readJsonResponse(response));
+          if (!response.ok || cancelled) {
+            return;
+          }
+
+          setScriptPayload((prev) => ({
+            ...prev,
+            title: typeof data.title === "string" ? data.title : prev.title,
+            hook: typeof data.hook === "string" ? data.hook : prev.hook,
+            sellingPoints: typeof data.sellingPoints === "string" ? data.sellingPoints : prev.sellingPoints,
+            storyboard: typeof data.storyboard === "string" ? data.storyboard : prev.storyboard,
+            cta: typeof data.cta === "string" ? data.cta : prev.cta,
+          }));
+
+          if (typeof data.structuredJson === "string") {
+            try {
+              const parsed = JSON.parse(data.structuredJson);
+              if (isGeneratedStructuredJson(parsed)) {
+                setScriptShots(generatedShotsToEditableShots(parsed.shots));
+                return;
+              }
+            } catch {
+              // keep fallback below
+            }
+          }
+
+          if (typeof data.storyboard === "string" && data.storyboard.trim()) {
+            setScriptShots(parseStoryboardToEditableShots(data.storyboard));
+          }
+        } catch {
+          // Keep current editor state when read fails.
+        }
+      })();
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [scriptId]);
 
   const dict = TEXT[locale];
 
   const steps = useMemo<StepView[]>(
     () => [
-      { id: "asset", title: dict.stepNames.asset, hint: dict.stepHints.asset, done: Boolean(assetUrl), blocked: false },
       { id: "script", title: dict.stepNames.script, hint: dict.stepHints.script, done: Boolean(scriptId.trim()), blocked: false },
       { id: "video", title: dict.stepNames.video, hint: dict.stepHints.video, done: Boolean(renderJobId), blocked: !scriptId.trim() },
     ],
-    [assetUrl, dict, renderJobId, scriptId],
+    [dict, renderJobId, scriptId],
   );
 
   const completed = useMemo(() => steps.filter((step) => step.done).length, [steps]);
   const progress = useMemo(() => Math.round((completed / steps.length) * 100), [completed, steps.length]);
-  const activeStep = useMemo(() => {
+  const suggestedActiveStepId = useMemo<StepId>(() => {
     const idx = steps.findIndex((step) => !step.done && !step.blocked);
     if (idx >= 0) {
-      return idx;
+      return steps[idx].id;
     }
     const pending = steps.findIndex((step) => !step.done);
-    return pending >= 0 ? pending : steps.length - 1;
+    return pending >= 0 ? steps[pending].id : "video";
   }, [steps]);
 
   const stepMap = useMemo(
@@ -887,6 +1203,14 @@ export default function Home() {
       ),
     [steps],
   );
+  const activeStepId = useMemo<StepId>(() => {
+    const current = stepMap[preferredStepId];
+    if (current && !current.blocked) {
+      return preferredStepId;
+    }
+    return suggestedActiveStepId;
+  }, [preferredStepId, stepMap, suggestedActiveStepId]);
+  const activeStep = stepMap[activeStepId]?.index ?? 0;
 
   const availableTextProviders = useMemo(
     () =>
@@ -932,8 +1256,8 @@ export default function Home() {
     [projects, projectId],
   );
   const selectedReferenceAssets = useMemo(
-    () => materialLibrary.filter((asset) => selectedReferenceAssetIds.includes(asset.id)),
-    [materialLibrary, selectedReferenceAssetIds],
+    () => materialLibrary.filter((asset) => asset.projectId === projectId.trim() && selectedReferenceAssetIds.includes(asset.id)),
+    [materialLibrary, selectedReferenceAssetIds, projectId],
   );
   const currentProjectScripts = useMemo(
     () => scriptHistory.filter((item) => item.projectId === projectId.trim()),
@@ -943,8 +1267,106 @@ export default function Home() {
     () => renderHistory.filter((item) => item.projectId === projectId.trim()),
     [renderHistory, projectId],
   );
+  const scriptJobGroups = useMemo(() => {
+    const jobsByScript = new Map<string, RenderHistoryItem[]>();
+    for (const job of currentProjectJobs) {
+      const key = job.scriptId?.trim() || "__unspecified__";
+      const list = jobsByScript.get(key) ?? [];
+      list.push(job);
+      jobsByScript.set(key, list);
+    }
+
+    const groups: Array<{
+      key: string;
+      script: ScriptHistoryItem | null;
+      jobs: RenderHistoryItem[];
+      latestTs: number;
+    }> = currentProjectScripts.map((script) => {
+      const jobs = [...(jobsByScript.get(script.id) ?? [])].sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      );
+      const latestTs = Math.max(
+        new Date(script.updatedAt).getTime(),
+        jobs[0] ? new Date(jobs[0].updatedAt).getTime() : 0,
+      );
+      return {
+        key: script.id,
+        script,
+        jobs,
+        latestTs,
+      };
+    });
+
+    const linkedScriptIds = new Set(currentProjectScripts.map((script) => script.id));
+    for (const [scriptId, jobs] of jobsByScript.entries()) {
+      if (scriptId === "__unspecified__" || linkedScriptIds.has(scriptId)) {
+        continue;
+      }
+      groups.push({
+        key: `missing-${scriptId}`,
+        script: null,
+        jobs: [...jobs].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+        latestTs: jobs[0] ? new Date(jobs[0].updatedAt).getTime() : 0,
+      });
+    }
+
+    const noScriptJobs = jobsByScript.get("__unspecified__") ?? [];
+    if (noScriptJobs.length > 0) {
+      groups.push({
+        key: "__unspecified__",
+        script: null,
+        jobs: [...noScriptJobs].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+        latestTs: noScriptJobs[0] ? new Date(noScriptJobs[0].updatedAt).getTime() : 0,
+      });
+    }
+
+    return groups
+      .sort((a, b) => b.latestTs - a.latestTs)
+      .slice(0, 10);
+  }, [currentProjectJobs, currentProjectScripts]);
+  const currentRenderJob = useMemo(
+    () => currentProjectJobs.find((job) => job.id === renderJobId.trim()) ?? null,
+    [currentProjectJobs, renderJobId],
+  );
   const isRenderPolling = Boolean(renderJobId.trim()) &&
     !["SUCCEEDED", "FAILED", "CANCELED"].includes(renderJobStatus);
+  const renderVideoResults = useMemo(() => {
+    const latestResult = renderVideoUrl
+      ? [{
+        id: renderJobId || "latest",
+        status: renderJobStatus || "SUCCEEDED",
+        url: renderVideoUrl,
+        updatedAt: new Date().toISOString(),
+      }]
+      : [];
+
+    const historyResults = currentProjectJobs
+      .filter((item) => Boolean(item.videoUrl))
+      .map((item) => ({
+        id: item.id,
+        status: item.status,
+        url: item.videoUrl as string,
+        updatedAt: item.updatedAt,
+      }));
+
+    const map = new Map<string, { id: string; status: string; url: string; updatedAt: string }>();
+    for (const item of [...latestResult, ...historyResults]) {
+      if (!map.has(item.id)) {
+        map.set(item.id, item);
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }, [currentProjectJobs, renderJobId, renderJobStatus, renderVideoUrl]);
+
+  useEffect(() => {
+    if (!renderJobId.trim()) {
+      setActiveRenderReferenceAssets([]);
+      return;
+    }
+
+    setActiveRenderReferenceAssets(currentRenderJob?.referenceAssets ?? []);
+  }, [currentRenderJob, renderJobId]);
 
   const inputClass =
     "h-11 w-full rounded-2xl border border-slate-300/90 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-200";
@@ -960,25 +1382,6 @@ export default function Home() {
     setContentLanguage(next);
   }
 
-  function switchProject(nextProjectId: string) {
-    const normalized = normalizeProjectIdInput(nextProjectId);
-    if (!normalized || normalized === projectId) {
-      return;
-    }
-
-    setAssetFile(null);
-    setAssetUrl("");
-    setScriptId("");
-    setRenderJobId("");
-    setRenderJobStatus("");
-    setRenderVideoUrl("");
-    router.push(buildProjectDetailPath(normalized));
-  }
-
-  function jumpTo(stepId: StepId) {
-    document.getElementById(`stage-${stepId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
   function toggleReferenceAsset(assetId: string) {
     setSelectedReferenceAssetIds((prev) => {
       if (prev.includes(assetId)) {
@@ -990,6 +1393,39 @@ export default function Home() {
       }
 
       return [...prev, assetId];
+    });
+  }
+
+  function updateShotField(shotId: string, field: keyof Omit<EditableShot, "id">, value: string | number) {
+    setScriptShots((prev) =>
+      prev.map((shot) =>
+        shot.id === shotId
+          ? {
+            ...shot,
+            [field]: field === "durationSec" ? Number(value) : value,
+          }
+          : shot,
+      ),
+    );
+  }
+
+  function addShot() {
+    setScriptShots((prev) => [
+      ...prev,
+      {
+        id: `shot-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        durationSec: 5,
+        visual: "",
+        caption: "",
+        camera: "",
+      },
+    ]);
+  }
+
+  function removeShot(shotId: string) {
+    setScriptShots((prev) => {
+      const next = prev.filter((shot) => shot.id !== shotId);
+      return next.length > 0 ? next : prev;
     });
   }
 
@@ -1012,7 +1448,7 @@ export default function Home() {
     if (response.ok) {
       const url = typeof data.url === "string" ? data.url : "";
       const uploadedAssetId = typeof data.id === "string" ? data.id : "";
-      setAssetUrl(url);
+      setAssetUrl(normalizeFileUrl(url));
       if (uploadedAssetId) {
         setSelectedReferenceAssetIds((prev) =>
           prev.includes(uploadedAssetId) ? prev : [...prev, uploadedAssetId].slice(0, 8),
@@ -1032,6 +1468,7 @@ export default function Home() {
   async function handleGenerateScript(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const sellingPoints = parseSellingPoints(generationPayload.sellingPointsText);
+    const normalizedDurationSec = Math.max(5, Math.min(60, Math.floor(Number(generationPayload.durationSec) || 30)));
 
     if (sellingPoints.length === 0) {
       setScriptState({ loading: false, result: dict.script.needPoints });
@@ -1050,13 +1487,13 @@ export default function Home() {
         sellingPoints,
         targetAudience: generationPayload.targetAudience,
         tone: generationPayload.tone,
-        durationSec: Number(generationPayload.durationSec),
+        durationSec: normalizedDurationSec,
         contentLanguage,
         referenceAssets: selectedReferenceAssets.map((asset) => ({
           id: asset.id,
           projectId: asset.projectId,
           fileName: asset.fileName || "unknown",
-          url: asset.url,
+          url: toAbsoluteFileUrl(asset.url),
         })),
         modelProvider: runtimeTextModel ?? undefined,
       }),
@@ -1078,7 +1515,13 @@ export default function Home() {
           storyboard: toStoryboardText(structured.shots),
           cta: structured.cta,
         });
+        setScriptShots(generatedShotsToEditableShots(structured.shots));
       }
+
+      setGenerationPayload((prev) => ({
+        ...prev,
+        durationSec: normalizedDurationSec,
+      }));
 
       setRenderJobId("");
       setRenderJobStatus("");
@@ -1094,23 +1537,93 @@ export default function Home() {
     });
   }
 
+  async function handleAutoFillScriptInputs() {
+    const runtimeTextModel = selectedTextProvider ? toRuntimeTextModelConfig(selectedTextProvider) : null;
+    setScriptState({
+      loading: true,
+      result: localize(locale, "正在根据素材自动填充参数...", "Auto-filling fields from assets..."),
+    });
+
+    const response = await fetch("/api/ai/scripts/autofill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId,
+        contentLanguage,
+        referenceAssets: selectedReferenceAssets.map((asset) => ({
+          id: asset.id,
+          projectId: asset.projectId,
+          fileName: asset.fileName || "unknown",
+          url: toAbsoluteFileUrl(asset.url),
+        })),
+        modelProvider: runtimeTextModel ?? undefined,
+      }),
+    });
+
+    const data = toJsonRecord(await readJsonResponse(response));
+    if (response.ok) {
+      setGenerationPayload((prev) => ({
+        ...prev,
+        productName: typeof data.productName === "string" ? data.productName : prev.productName,
+        targetAudience: typeof data.targetAudience === "string" ? data.targetAudience : prev.targetAudience,
+        sellingPointsText: Array.isArray(data.sellingPoints)
+          ? (data.sellingPoints.filter((item): item is string => typeof item === "string").join(", ") || prev.sellingPointsText)
+          : prev.sellingPointsText,
+        tone: typeof data.tone === "string" ? data.tone : prev.tone,
+        durationSec:
+          typeof data.durationSec === "number"
+            ? Math.max(5, Math.min(60, Math.floor(data.durationSec)))
+            : prev.durationSec,
+      }));
+
+      setScriptState({
+        loading: false,
+        result: formatJson(data),
+      });
+      return;
+    }
+
+    setScriptState({
+      loading: false,
+      result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
+    });
+  }
+
   async function handleUpdateScript() {
     if (!scriptId.trim()) {
       setScriptState({ loading: false, result: dict.script.needScriptId });
       return;
     }
+    const normalizedShots = normalizeEditableShots(scriptShots);
+    const storyboard = toStoryboardTextFromEditableShots(normalizedShots);
+    const structuredJson = JSON.stringify({
+      title: scriptPayload.title,
+      hook: scriptPayload.hook,
+      voiceover: scriptPayload.sellingPoints,
+      cta: scriptPayload.cta,
+      shots: toGeneratedShotsFromEditableShots(normalizedShots),
+    });
+    const updatePayload = {
+      ...scriptPayload,
+      storyboard,
+      structuredJson,
+    };
 
     setScriptState({ loading: true, result: dict.script.saving });
 
     const response = await fetch(`/api/scripts/${scriptId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(scriptPayload),
+      body: JSON.stringify(updatePayload),
     });
 
     const data = await readJsonResponse(response);
 
     if (response.ok) {
+      setScriptPayload((prev) => ({
+        ...prev,
+        storyboard,
+      }));
       setScriptState({ loading: false, result: formatJson(data) });
       await refreshWorkspace(projectId);
       return;
@@ -1127,9 +1640,13 @@ export default function Home() {
       setRenderState({ loading: false, result: dict.video.needScriptId });
       return;
     }
+    const normalizedDurationSec = Math.max(5, Math.min(60, Math.floor(Number(generationPayload.durationSec) || 30)));
 
     setRenderVideoUrl("");
     setRenderJobStatus("");
+    setRenderProgress(null);
+    setRenderShotStatuses([]);
+    setActiveRenderReferenceAssets([]);
     setRenderState({ loading: true, result: dict.video.submitting });
     const runtimeVideoModel = selectedVideoProvider ? toRuntimeVideoModelConfig(selectedVideoProvider) : null;
 
@@ -1141,6 +1658,17 @@ export default function Home() {
         scriptId,
         voiceStyle,
         aspectRatio: renderAspectRatio,
+        durationSec: normalizedDurationSec,
+        referenceImageUrls: selectedReferenceAssets.map((asset) => toAbsoluteFileUrl(asset.url)),
+        referenceAssets: selectedReferenceAssets.map((asset) => ({
+          id: asset.id,
+          projectId: asset.projectId,
+          fileName: asset.fileName,
+          url: toAbsoluteFileUrl(asset.url),
+        })),
+        requestNonce: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
         selectedVideoModel: runtimeVideoModel ?? undefined,
       }),
     });
@@ -1153,25 +1681,86 @@ export default function Home() {
       if (typeof data.status === "string") {
         setRenderJobStatus(data.status);
       }
+      setRenderPollNonce((prev) => prev + 1);
       setRenderState({ loading: false, result: formatJson(data) });
       await refreshWorkspace(projectId);
       return;
     }
 
     setRenderJobId("");
+    setRenderProgress(null);
+    setRenderShotStatuses([]);
+    setActiveRenderReferenceAssets([]);
     setRenderState({
       loading: false,
       result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
     });
   }
 
-  const assetBadge = getBadge(dict, stepMap.asset, activeStep === stepMap.asset.index);
+  async function handleRetryRenderJob() {
+    if (!renderJobId.trim()) {
+      return;
+    }
+
+    const normalizedDurationSec = Math.max(5, Math.min(60, Math.floor(Number(generationPayload.durationSec) || 30)));
+    const runtimeVideoModel = selectedVideoProvider ? toRuntimeVideoModelConfig(selectedVideoProvider) : null;
+
+    setRenderState({ loading: true, result: dict.video.retrying });
+
+    const response = await fetch(`/api/render-jobs/${encodeURIComponent(renderJobId)}/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        durationSec: normalizedDurationSec,
+        referenceImageUrls: selectedReferenceAssets.map((asset) => toAbsoluteFileUrl(asset.url)),
+        referenceAssets: selectedReferenceAssets.map((asset) => ({
+          id: asset.id,
+          projectId: asset.projectId,
+          fileName: asset.fileName,
+          url: toAbsoluteFileUrl(asset.url),
+        })),
+        requestNonce: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+        selectedVideoModel: runtimeVideoModel ?? undefined,
+      }),
+    });
+
+    const data = toJsonRecord(await readJsonResponse(response));
+
+    if (response.ok) {
+      const status = typeof data.status === "string" ? data.status : "";
+      const videoUrl = typeof data.videoUrl === "string" ? data.videoUrl : "";
+
+      if (status) {
+        setRenderJobStatus(status);
+      }
+      if (videoUrl) {
+        setRenderVideoUrl(videoUrl);
+      } else {
+        setRenderVideoUrl("");
+      }
+
+      setRenderProgress(null);
+      setRenderShotStatuses([]);
+      setRenderPollNonce((prev) => prev + 1);
+      setRenderState({ loading: false, result: formatJson(data) });
+      await refreshWorkspace(projectId);
+      return;
+    }
+
+    setRenderState({
+      loading: false,
+      result: `${dict.errorPrefix} ${response.status}\n${formatJson(data)}`,
+    });
+  }
+
   const scriptBadge = getBadge(dict, stepMap.script, activeStep === stepMap.script.index);
   const videoBadge = getBadge(dict, stepMap.video, activeStep === stepMap.video.index);
 
   return (
-    <div className="min-h-screen pb-20">
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pt-6 md:px-8 lg:pt-8">
+    <div className="min-h-screen overflow-x-hidden pb-20">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 overflow-x-hidden px-4 pt-6 md:px-8 lg:pt-8">
         <section className="relative overflow-hidden rounded-[30px] border border-white/70 bg-white/85 p-6 shadow-[0_22px_60px_rgba(15,23,42,0.1)] backdrop-blur md:p-8">
           <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-[radial-gradient(circle,rgba(15,118,110,0.22),rgba(15,118,110,0))]" />
           <div className="pointer-events-none absolute -left-14 bottom-0 h-48 w-48 rounded-full bg-[radial-gradient(circle,rgba(234,88,12,0.18),rgba(234,88,12,0))]" />
@@ -1236,35 +1825,19 @@ export default function Home() {
             </article>
           </div>
 
-          <div className="mt-5 grid gap-2 md:grid-cols-[180px_1fr] md:items-center">
-            <label htmlFor="projectSelect" className="text-sm font-semibold text-slate-700">
-              {dict.projectIdLabel}
-            </label>
-            <div className="space-y-2">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <select
-                  id="projectSelect"
-                  value={projectId}
-                  onChange={(event) => switchProject(event.target.value)}
-                  className={`${inputClass} sm:max-w-md`}
-                >
-                  <option value={projectId}>{localize(locale, "当前项目", "Current")}: {projectId}</option>
-                  {projects
-                    .filter((item) => item.id !== projectId)
-                    .map((item) => (
-                      <option key={`project-opt-${item.id}`} value={item.id}>
-                        {item.id} · {item.name}
-                      </option>
-                    ))}
-                </select>
-                <button type="button" onClick={() => void refreshWorkspace(projectId)} className={secondaryButtonClass}>
-                  {workspaceState.loading ? localize(locale, "刷新中...", "Refreshing...") : localize(locale, "刷新记录", "Refresh Records")}
-                </button>
-              </div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/90 p-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                {localize(locale, "当前项目", "Current Project")}
+              </p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {currentProjectSummary?.name || localize(locale, "未命名项目", "Untitled Project")}
+              </p>
             </div>
+            <button type="button" onClick={() => void refreshWorkspace(projectId)} className={secondaryButtonClass}>
+              {workspaceState.loading ? localize(locale, "刷新中...", "Refreshing...") : localize(locale, "刷新记录", "Refresh Records")}
+            </button>
           </div>
-          <p className="mt-2 text-xs text-slate-500">{dict.projectIdHint}</p>
-          <p className="mt-1 text-xs text-slate-500">{workspaceState.result}</p>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -1284,7 +1857,7 @@ export default function Home() {
                     <button
                       key={step.id}
                       type="button"
-                      onClick={() => jumpTo(step.id)}
+                      onClick={() => setPreferredStepId(step.id)}
                       className="flex w-full cursor-pointer items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-teal-300 hover:bg-teal-50/40"
                       aria-current={index === activeStep ? "step" : undefined}
                     >
@@ -1325,9 +1898,110 @@ export default function Home() {
                 </div>
               </div>
             </section>
+
+            <section className="rounded-3xl border border-white/70 bg-white/84 p-5 shadow-[0_14px_36px_rgba(15,23,42,0.08)]">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {localize(locale, "素材与上传", "Assets & Upload")}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {localize(locale, "在这里上传并选择参考素材。", "Upload and select reference assets here.")}
+                  </p>
+                </div>
+                <span className="inline-flex rounded-full border border-teal-200 bg-teal-50 px-2 py-1 text-[11px] font-semibold text-teal-700">
+                  {selectedReferenceAssets.length}/8
+                </span>
+              </div>
+
+              <form className="mt-4 grid gap-2" onSubmit={handleUploadAsset}>
+                <label htmlFor="asset-file" className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+                  {dict.asset.fileLabel}
+                </label>
+                <input
+                  id="asset-file"
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => setAssetFile(event.target.files?.[0] ?? null)}
+                  className="block w-full cursor-pointer rounded-2xl border border-slate-300 bg-white p-2 text-xs text-slate-700 file:mr-2 file:cursor-pointer file:rounded-lg file:border-0 file:bg-slate-900 file:px-2 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+                />
+                <button type="submit" disabled={assetState.loading} className={primaryButtonClass}>
+                  {assetState.loading ? dict.asset.submitting : dict.asset.submit}
+                </button>
+              </form>
+
+              {assetUrl ? (
+                <button
+                  type="button"
+                  onClick={() => openImagePreview(assetUrl, dict.asset.preview)}
+                  className="group mt-3 block w-full overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 text-left transition hover:border-teal-300 hover:bg-teal-50/40"
+                >
+                  <div className="aspect-[4/3] overflow-hidden rounded-xl bg-slate-100">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={assetUrl}
+                      alt="Uploaded project asset preview"
+                      className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]"
+                    />
+                  </div>
+                </button>
+              ) : null}
+
+              <div className="mt-3 max-h-[360px] space-y-2 overflow-auto pr-1">
+                {materialLibrary.slice(0, 24).map((asset) => {
+                  const selected = selectedReferenceAssetIds.includes(asset.id);
+                  return (
+                    <article
+                      key={`material-${asset.id}`}
+                      className={`rounded-2xl border p-2 transition ${
+                        selected
+                          ? "border-teal-400 bg-teal-50/70"
+                          : "border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="inline-flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleReferenceAsset(asset.id)}
+                            className="h-4 w-4 accent-teal-700"
+                          />
+                          <span className="text-[11px] font-semibold text-slate-600">
+                            {selected ? localize(locale, "已选中", "Selected") : localize(locale, "勾选", "Select")}
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => openImagePreview(asset.url, asset.fileName || asset.id)}
+                          className="text-[11px] font-semibold text-teal-700 underline underline-offset-4"
+                        >
+                          {localize(locale, "预览", "Preview")}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openImagePreview(asset.url, asset.fileName || asset.id)}
+                        className="mt-2 block w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={asset.url}
+                          alt={asset.fileName || asset.id}
+                          className="h-24 w-full object-contain"
+                        />
+                      </button>
+                      <p className="mt-2 truncate text-xs font-semibold text-slate-700">{asset.fileName || asset.id}</p>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <ResponsePanel heading={dict.responseTitle} state={assetState} empty={dict.responseEmpty} />
+            </section>
           </aside>
 
-	          <div className="space-y-6">
+	          <div className="min-w-0 space-y-6">
 	            <article className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">
 	              <div className="flex flex-wrap items-start justify-between gap-3">
 	                <div>
@@ -1335,7 +2009,7 @@ export default function Home() {
 	                    {localize(locale, "项目工作区", "Project Workspace")}
 	                  </p>
 	                  <h2 className="mt-1 text-2xl font-semibold text-slate-900">
-	                    {currentProjectSummary?.name || projectId}
+	                    {currentProjectSummary?.name || localize(locale, "未命名项目", "Untitled Project")}
 	                  </h2>
 	                  <p className="mt-2 text-sm text-slate-600">
 	                    {localize(
@@ -1345,9 +2019,6 @@ export default function Home() {
 	                    )}
 	                  </p>
 	                </div>
-	                <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-slate-700">
-	                  {projectId}
-	                </span>
 	              </div>
 
 	              <div className="mt-4 grid gap-3 sm:grid-cols-4">
@@ -1369,156 +2040,91 @@ export default function Home() {
 	                </div>
 	              </div>
 
-	              <div className="mt-4 grid gap-3 lg:grid-cols-2">
-	                <section className="rounded-2xl border border-slate-200 bg-white p-3">
-	                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-	                    {localize(locale, "最近脚本记录", "Recent Scripts")}
-	                  </p>
-	                  <div className="mt-2 max-h-56 space-y-2 overflow-auto pr-1">
-	                    {currentProjectScripts.length > 0 ? (
-	                      currentProjectScripts.slice(0, 8).map((item) => (
-	                        <button
-	                          key={`script-record-${item.id}`}
-	                          type="button"
-	                          onClick={() => setScriptId(item.id)}
-	                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50"
-	                        >
-	                          <p className="text-xs font-semibold text-slate-800">{item.title || item.id}</p>
-	                          <p className="mt-1 text-[11px] text-slate-500">{item.id} · {item.generatorModel || dict.modelUnknown}</p>
-	                        </button>
-	                      ))
-	                    ) : (
-	                      <p className="text-xs text-slate-500">{localize(locale, "暂无脚本记录。", "No script records yet.")}</p>
-	                    )}
-	                  </div>
-	                </section>
-
-	                <section className="rounded-2xl border border-slate-200 bg-white p-3">
-	                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-	                    {localize(locale, "最近视频任务", "Recent Video Jobs")}
-	                  </p>
-	                  <div className="mt-2 max-h-56 space-y-2 overflow-auto pr-1">
-	                    {currentProjectJobs.length > 0 ? (
-	                      currentProjectJobs.slice(0, 8).map((item) => (
-	                        <button
-	                          key={`job-record-${item.id}`}
-	                          type="button"
-	                          onClick={() => setRenderJobId(item.id)}
-	                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50"
-	                        >
-	                          <p className="text-xs font-semibold text-slate-800">{item.id}</p>
-	                          <p className="mt-1 text-[11px] text-slate-500">
-	                            {item.status} · {item.provider || dict.providerUnknown}
-	                          </p>
-	                        </button>
-	                      ))
-	                    ) : (
-	                      <p className="text-xs text-slate-500">{localize(locale, "暂无视频任务。", "No render jobs yet.")}</p>
-	                    )}
-	                  </div>
-	                </section>
-	              </div>
-	            </article>
-
-	            <article className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]" style={{ animationDelay: "20ms" }}>
-	              <div className="flex flex-wrap items-start justify-between gap-3">
-	                <div>
-	                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-	                    {localize(locale, "素材库", "Material Library")}
-	                  </p>
-	                  <h2 className="mt-1 text-2xl font-semibold text-slate-900">
-	                    {localize(locale, "勾选素材作为文案生成参考", "Select materials as script references")}
-	                  </h2>
-	                  <p className="mt-2 text-sm text-slate-600">
-	                    {localize(
-	                      locale,
-	                      "最多选择 8 个素材。第 2 步生成文案时会把这些素材信息一并发给大模型。",
-	                      "Select up to 8 assets. Step 2 sends them to the text model as context.",
-	                    )}
-	                  </p>
+	              <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
+	                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+	                  {localize(locale, "脚本与任务历史", "Script & Job Timeline")}
+	                </p>
+	                <div className="mt-2 max-h-[420px] space-y-3 overflow-auto pr-1">
+	                  {scriptJobGroups.length > 0 ? (
+	                    scriptJobGroups.map((group) => (
+	                      <article key={`timeline-${group.key}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+	                        <div className="flex items-start justify-between gap-2">
+	                          <div className="min-w-0">
+	                            <p className="truncate text-sm font-semibold text-slate-900">
+	                              {group.script?.title || localize(locale, "未命名脚本", "Untitled Script")}
+	                            </p>
+	                            <p className="mt-1 text-[11px] text-slate-500">
+	                              {group.script
+	                                ? `${new Date(group.script.updatedAt).toLocaleString(locale)} · ${group.script.generatorModel || dict.modelUnknown}`
+	                                : localize(locale, "脚本信息缺失或任务未绑定脚本", "Script not found or job not linked")}
+	                            </p>
+	                          </div>
+	                          {group.script ? (
+	                            <button
+	                              type="button"
+	                              onClick={() => {
+	                                setScriptId(group.script?.id || "");
+	                                setPreferredStepId("script");
+	                              }}
+	                              className="shrink-0 text-[11px] font-semibold text-teal-700 underline underline-offset-4"
+	                            >
+	                              {localize(locale, "编辑脚本", "Edit Script")}
+	                            </button>
+	                          ) : null}
+	                        </div>
+	                        {group.jobs.length > 0 ? (
+	                          <div className="mt-2 space-y-1.5">
+	                            {group.jobs.slice(0, 5).map((job) => (
+	                              <button
+	                                key={`timeline-job-${job.id}`}
+	                                type="button"
+                                onClick={() => {
+                                  setRenderJobId(job.id);
+                                  setRenderJobStatus(job.status);
+                                  setRenderProgress(job.progress ?? null);
+                                  setRenderShotStatuses([]);
+                                  setActiveRenderReferenceAssets(job.referenceAssets ?? []);
+                                  if (job.videoUrl) {
+                                    setRenderVideoUrl(job.videoUrl);
+                                  } else {
+                                    setRenderVideoUrl("");
+                                  }
+                                  setRenderPollNonce((prev) => prev + 1);
+                                  setPreferredStepId("video");
+                                }}
+	                                className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-2 py-2 text-left transition hover:border-teal-300 hover:bg-teal-50"
+	                              >
+	                                <span className="min-w-0">
+                                    <span className="block truncate text-xs font-semibold text-slate-800">{job.id}</span>
+                                    {Array.isArray(job.referenceAssets) && job.referenceAssets.length > 0 ? (
+                                      <span className="mt-0.5 block truncate text-[11px] text-teal-700">
+                                        {localize(locale, `参考素材 ${job.referenceAssets.length} 张`, `${job.referenceAssets.length} reference assets`)}
+                                      </span>
+                                    ) : null}
+                                  </span>
+	                                <span className="ml-2 shrink-0 text-[11px] text-slate-500">
+	                                  {job.status} · {new Date(job.updatedAt).toLocaleString(locale)}
+	                                </span>
+	                              </button>
+	                            ))}
+	                          </div>
+	                        ) : (
+	                          <p className="mt-2 text-xs text-slate-500">{localize(locale, "该脚本还没有任务。", "No jobs under this script yet.")}</p>
+	                        )}
+	                      </article>
+	                    ))
+	                  ) : (
+	                    <p className="text-xs text-slate-500">{localize(locale, "暂无脚本与任务历史。", "No scripts or jobs yet.")}</p>
+	                  )}
 	                </div>
-	                <span className="inline-flex rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-teal-700">
-	                  {localize(locale, "已选", "Selected")} {selectedReferenceAssets.length}/8
-	                </span>
-	              </div>
-
-	              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-	                {materialLibrary.slice(0, 24).map((asset) => {
-	                  const selected = selectedReferenceAssetIds.includes(asset.id);
-	                  return (
-	                    <label
-	                      key={`material-${asset.id}`}
-	                      className={`flex cursor-pointer flex-col gap-2 rounded-2xl border p-3 transition ${
-	                        selected
-	                          ? "border-teal-400 bg-teal-50/70"
-	                          : "border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50"
-	                      }`}
-	                    >
-	                      <div className="flex items-center justify-between gap-2">
-	                        <input
-	                          type="checkbox"
-	                          checked={selected}
-	                          onChange={() => toggleReferenceAsset(asset.id)}
-	                          className="h-4 w-4 accent-teal-700"
-	                        />
-	                        <span className="text-[11px] font-semibold text-slate-500">{asset.projectId}</span>
-	                      </div>
-	                      {/* eslint-disable-next-line @next/next/no-img-element */}
-	                      <img src={asset.url} alt={asset.fileName || asset.id} className="h-28 w-full rounded-xl object-cover" />
-	                      <p className="truncate text-xs font-semibold text-slate-800">{asset.fileName || asset.id}</p>
-	                    </label>
-	                  );
-	                })}
-	              </div>
-
-	              {materialLibrary.length === 0 ? (
-	                <p className="mt-4 text-xs text-slate-500">{localize(locale, "素材库为空，请先上传素材。", "Material library is empty. Upload assets first.")}</p>
-	              ) : null}
+	              </section>
 	            </article>
 
-	            <article id="stage-asset" className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{dict.stepTag} 01</p>
-                  <h2 className="mt-1 text-2xl font-semibold text-slate-900">{dict.asset.title}</h2>
-                  <p className="mt-2 text-sm text-slate-600">{dict.asset.desc}</p>
-                </div>
-                <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.1em] ${assetBadge.cls}`}>
-                  {assetBadge.text}
-                </span>
-              </div>
-
-              <form className="mt-5 grid gap-3" onSubmit={handleUploadAsset}>
-                <label htmlFor="asset-file" className="text-sm font-semibold text-slate-700">
-                  {dict.asset.fileLabel}
-                </label>
-                <input
-                  id="asset-file"
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => setAssetFile(event.target.files?.[0] ?? null)}
-                  className="block w-full cursor-pointer rounded-2xl border border-slate-300 bg-white p-2.5 text-sm text-slate-700 file:mr-3 file:cursor-pointer file:rounded-xl file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
-                />
-                <button type="submit" disabled={assetState.loading} className={primaryButtonClass}>
-                  {assetState.loading ? dict.asset.submitting : dict.asset.submit}
-                </button>
-              </form>
-
-              {assetUrl ? (
-                <figure className="mt-5 rounded-2xl border border-slate-200 bg-white p-3">
-                  <figcaption className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{dict.asset.preview}</figcaption>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={assetUrl} alt="Uploaded project asset preview" className="max-h-72 w-full rounded-xl object-cover" />
-                </figure>
-              ) : null}
-
-              <ResponsePanel heading={dict.responseTitle} state={assetState} empty={dict.responseEmpty} />
-            </article>
-
+            {activeStepId === "script" ? (
             <article id="stage-script" className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]" style={{ animationDelay: "60ms" }}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{dict.stepTag} 02</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{dict.stepTag} 01</p>
                   <h2 className="mt-1 text-2xl font-semibold text-slate-900">{dict.script.title}</h2>
                   <p className="mt-2 text-sm text-slate-600">{dict.script.desc}</p>
                 </div>
@@ -1595,7 +2201,7 @@ export default function Home() {
                     <input
                       type="number"
                       min={5}
-                      max={180}
+                      max={60}
                       value={generationPayload.durationSec}
                       onChange={(event) =>
                         setGenerationPayload((prev) => ({
@@ -1666,6 +2272,15 @@ export default function Home() {
                   )}
                 </div>
 
+                <button
+                  type="button"
+                  onClick={() => void handleAutoFillScriptInputs()}
+                  disabled={scriptState.loading || selectedReferenceAssets.length === 0}
+                  className={secondaryButtonClass}
+                >
+                  {localize(locale, "根据素材自动填充参数", "Auto-fill fields from assets")}
+                </button>
+
                 <button type="submit" disabled={scriptState.loading} className={primaryButtonClass}>
                   {scriptState.loading ? dict.script.submitting : dict.script.submit}
                 </button>
@@ -1718,20 +2333,66 @@ export default function Home() {
                     />
                   </label>
 
-                  <label className="space-y-1">
-                    <span className="text-sm font-semibold text-slate-700">{dict.script.storyboard}</span>
-                    <textarea
-                      value={scriptPayload.storyboard}
-                      onChange={(event) =>
-                        setScriptPayload((prev) => ({
-                          ...prev,
-                          storyboard: event.target.value,
-                        }))
-                      }
-                      rows={3}
-                      className={textAreaClass}
-                    />
-                  </label>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-slate-700">{dict.script.storyboard}</span>
+                      <button
+                        type="button"
+                        onClick={addShot}
+                        className="text-xs font-semibold text-teal-700 underline underline-offset-4"
+                      >
+                        {localize(locale, "新增分镜", "Add Shot")}
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {scriptShots.map((shot, index) => (
+                        <div key={shot.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                              {localize(locale, "分镜", "Shot")} {index + 1}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => removeShot(shot.id)}
+                              disabled={scriptShots.length <= 1}
+                              className="text-[11px] font-semibold text-slate-500 underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {localize(locale, "删除", "Remove")}
+                            </button>
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <input
+                              value={shot.visual}
+                              onChange={(event) => updateShotField(shot.id, "visual", event.target.value)}
+                              placeholder={localize(locale, "画面描述", "Visual description")}
+                              className={inputClass}
+                            />
+                            <input
+                              value={shot.camera}
+                              onChange={(event) => updateShotField(shot.id, "camera", event.target.value)}
+                              placeholder={localize(locale, "镜头语言", "Camera movement")}
+                              className={inputClass}
+                            />
+                            <input
+                              value={shot.caption}
+                              onChange={(event) => updateShotField(shot.id, "caption", event.target.value)}
+                              placeholder={localize(locale, "字幕文案", "Caption text")}
+                              className={inputClass}
+                            />
+                            <input
+                              type="number"
+                              min={1}
+                              max={60}
+                              value={shot.durationSec}
+                              onChange={(event) => updateShotField(shot.id, "durationSec", Number(event.target.value))}
+                              placeholder={localize(locale, "时长（秒）", "Duration (sec)")}
+                              className={inputClass}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
 
                   <label className="space-y-1">
                     <span className="text-sm font-semibold text-slate-700">{dict.script.cta}</span>
@@ -1774,10 +2435,12 @@ export default function Home() {
 
               <ResponsePanel heading={dict.responseTitle} state={scriptState} empty={dict.responseEmpty} />
             </article>
+            ) : null}
+            {activeStepId === "video" ? (
             <article id="stage-video" className="reveal-up rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]" style={{ animationDelay: "140ms" }}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{dict.stepTag} 03</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{dict.stepTag} 02</p>
                   <h2 className="mt-1 text-2xl font-semibold text-slate-900">{dict.video.title}</h2>
                   <p className="mt-2 text-sm text-slate-600">{dict.video.desc}</p>
                 </div>
@@ -1868,29 +2531,111 @@ export default function Home() {
                     <span className="font-semibold text-slate-600">{dict.video.status}:</span> {renderJobStatus || dict.queuedFallback}
                     {isRenderPolling ? ` · ${dict.video.polling}` : ""}
                   </p>
+                  {renderProgress ? (
+                    <p className="mt-1">
+                      <span className="font-semibold text-slate-600">{dict.video.shotStatus}:</span>{" "}
+                      {renderProgress.completed}/{renderProgress.total}
+                      {renderProgress.failed > 0 ? ` · failed ${renderProgress.failed}` : ""}
+                    </p>
+                  ) : null}
+                  {renderShotStatuses.length > 0 ? (
+                    <div className="mt-2 space-y-1">
+                      {renderShotStatuses
+                        .slice()
+                        .sort((a, b) => a.shotIndex - b.shotIndex)
+                        .map((shot) => (
+                          <p key={`render-shot-status-${shot.shotIndex}`} className="truncate">
+                            #{shot.shotIndex}: {shot.status}
+                            {shot.errorMessage ? ` · ${shot.errorMessage}` : ""}
+                          </p>
+                        ))}
+                    </div>
+                  ) : null}
+                  {renderJobStatus === "FAILED" ? (
+                    <button
+                      type="button"
+                      onClick={handleRetryRenderJob}
+                      disabled={renderState.loading}
+                      className={`${secondaryButtonClass} mt-3`}
+                    >
+                      {renderState.loading ? dict.video.retrying : dict.video.retry}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
 
-              {renderVideoUrl ? (
+              {renderJobId && Array.isArray(activeRenderReferenceAssets) && activeRenderReferenceAssets.length > 0 ? (
+                <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    {localize(locale, "当前成片对应素材", "Assets linked to this video")}
+                  </p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {activeRenderReferenceAssets.slice(0, 8).map((asset) => (
+                      <article key={`render-ref-${asset.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+                        <button
+                          type="button"
+                          onClick={() => openImagePreview(asset.url, asset.fileName || asset.id)}
+                          className="block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-100"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={asset.url}
+                            alt={asset.fileName || asset.id}
+                            className="h-20 w-full object-contain"
+                          />
+                        </button>
+                        <p className="mt-1 truncate text-[11px] font-semibold text-slate-700">{asset.fileName || asset.id}</p>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {renderVideoResults.length > 0 ? (
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{dict.video.ready}</p>
-                  <video className="w-full rounded-xl" controls src={renderVideoUrl} />
-                  <a
-                    href={renderVideoUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 inline-block text-xs font-semibold text-teal-700 underline underline-offset-4"
-                  >
-                    {renderVideoUrl}
-                  </a>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {renderVideoResults.slice(0, 8).map((item) => (
+                      <article key={`video-preview-${item.id}`} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                        <button
+                          type="button"
+                          onClick={() => openVideoPreview(item.url, `${dict.video.jobId}: ${item.id}`)}
+                          className="group block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-900"
+                        >
+                          <div className="flex aspect-video items-center justify-center">
+                            <span className="rounded-full border border-slate-400 px-3 py-1 text-xs font-semibold text-slate-200 transition group-hover:border-teal-300 group-hover:text-teal-200">
+                              {localize(locale, "点击播放预览", "Click to preview")}
+                            </span>
+                          </div>
+                        </button>
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold text-slate-800">{item.id}</p>
+                            <p className="mt-1 truncate text-[11px] text-slate-500">
+                              {new Date(item.updatedAt).toLocaleString(locale)} · {item.status}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openVideoPreview(item.url, `${dict.video.jobId}: ${item.id}`)}
+                            className="shrink-0 text-[11px] font-semibold text-teal-700 underline underline-offset-4"
+                          >
+                            {localize(locale, "播放", "Play")}
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
                 </div>
               ) : null}
 
               <ResponsePanel heading={dict.responseTitle} state={renderState} empty={dict.responseEmpty} />
             </article>
+            ) : null}
           </div>
         </section>
       </main>
+      <MediaPreviewDialog preview={previewDialog} locale={locale} onClose={closePreviewDialog} />
     </div>
   );
 }

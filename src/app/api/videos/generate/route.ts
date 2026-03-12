@@ -11,6 +11,19 @@ const requestSchema = z.object({
   scriptId: z.string().min(1),
   aspectRatio: z.enum(["9:16", "16:9"]),
   voiceStyle: z.string().min(1),
+  durationSec: z.number().int().min(-1).max(60).optional(),
+  firstFrameUrl: z.string().url().optional(),
+  lastFrameUrl: z.string().url().optional(),
+  referenceImageUrls: z.array(z.string().url()).max(8).optional(),
+  referenceAssets: z.array(
+    z.object({
+      id: z.string().min(1),
+      projectId: z.string().min(1),
+      fileName: z.string().min(1).nullable().optional(),
+      url: z.string().url(),
+    }),
+  ).max(8).optional(),
+  requestNonce: z.string().optional(),
   templateId: z.string().min(1).optional(),
   selectedVideoModel: z
     .object({
@@ -20,6 +33,26 @@ const requestSchema = z.object({
       modelId: z.string().min(1),
     })
     .optional(),
+}).superRefine((value, ctx) => {
+  if (value.lastFrameUrl && !value.firstFrameUrl) {
+    ctx.addIssue({
+      path: ["firstFrameUrl"],
+      code: z.ZodIssueCode.custom,
+      message: "firstFrameUrl is required when lastFrameUrl is provided",
+    });
+  }
+
+  if (
+    (Array.isArray(value.referenceImageUrls) && value.referenceImageUrls.length > 0
+      || Array.isArray(value.referenceAssets) && value.referenceAssets.length > 0) &&
+    (typeof value.firstFrameUrl === "string" || typeof value.lastFrameUrl === "string")
+  ) {
+    ctx.addIssue({
+      path: ["referenceImageUrls"],
+      code: z.ZodIssueCode.custom,
+      message: "referenceImageUrls cannot be combined with firstFrameUrl/lastFrameUrl",
+    });
+  }
 });
 
 export async function POST(request: Request) {
@@ -37,6 +70,12 @@ export async function POST(request: Request) {
       scriptId: body.scriptId,
       voiceStyle: body.voiceStyle,
       aspectRatio: body.aspectRatio,
+      durationSec: body.durationSec,
+      firstFrameUrl: body.firstFrameUrl,
+      lastFrameUrl: body.lastFrameUrl,
+      referenceImageUrls: body.referenceImageUrls,
+      referenceAssets: body.referenceAssets,
+      requestNonce: body.requestNonce,
       provider: body.selectedVideoModel?.protocol ?? "seadance",
       selectedVideoModel: body.selectedVideoModel,
     });
