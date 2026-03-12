@@ -30,9 +30,14 @@ type Dict = {
   heroDesc: string;
   refresh: string;
   refreshing: string;
+  createCardTitle: string;
+  createCardHint: string;
   createLabel: string;
   createPlaceholder: string;
+  createDescriptionLabel: string;
+  createDescriptionPlaceholder: string;
   createButton: string;
+  cancelCreate: string;
   cardsTitle: string;
   cardsHint: string;
   projectCount: (count: number) => string;
@@ -59,11 +64,16 @@ const TEXT: Record<Locale, Dict> = {
     heroDesc: "先选择项目卡片，再进入项目详情页进行配置与生成。",
     refresh: "刷新项目",
     refreshing: "刷新中...",
-    createLabel: "新建项目标题",
+    createCardTitle: "新增项目",
+    createCardHint: "点击后填写项目信息，确定后进入详情页。",
+    createLabel: "项目标题",
     createPlaceholder: "例如：龙年新品发布",
-    createButton: "创建并进入",
+    createDescriptionLabel: "项目描述（可选）",
+    createDescriptionPlaceholder: "例如：首发短视频创作与投放",
+    createButton: "确定并进入详情",
+    cancelCreate: "取消",
     cardsTitle: "项目列表",
-    cardsHint: "点击任意卡片进入详细配置与生成工作台。",
+    cardsHint: "点击项目卡片进入工作台，或使用“新增项目”卡片快速创建。",
     projectCount: (count) => `${count} 个项目`,
     empty: "暂无项目，先创建一个开始。",
     open: "进入项目",
@@ -86,11 +96,16 @@ const TEXT: Record<Locale, Dict> = {
     heroDesc: "Select a project card first, then open the detail workspace for configuration and generation.",
     refresh: "Refresh Projects",
     refreshing: "Refreshing...",
-    createLabel: "New Project Title",
+    createCardTitle: "Add Project",
+    createCardHint: "Click to fill in project information and open details after confirmation.",
+    createLabel: "Project Title",
     createPlaceholder: "e.g. Dragon Product Launch",
-    createButton: "Create & Open",
+    createDescriptionLabel: "Description (Optional)",
+    createDescriptionPlaceholder: "e.g. Launch campaign for first short-video batch",
+    createButton: "Confirm & Open Details",
+    cancelCreate: "Cancel",
     cardsTitle: "Projects",
-    cardsHint: "Click a card to open the detailed config and generation workspace.",
+    cardsHint: "Open any project card, or use the add card to create one quickly.",
     projectCount: (count) => `${count} Project${count === 1 ? "" : "s"}`,
     empty: "No projects yet. Create one to get started.",
     open: "Open Project",
@@ -134,6 +149,8 @@ export default function Home() {
   const [locale, setLocale] = useState<Locale>("zh-CN");
   const [projects, setProjects] = useState<ProjectSummaryItem[]>([]);
   const [draftProjectTitle, setDraftProjectTitle] = useState("");
+  const [draftProjectDescription, setDraftProjectDescription] = useState("");
+  const [isCreateCardOpen, setIsCreateCardOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
@@ -202,6 +219,7 @@ export default function Home() {
 
   async function handleCreateProject() {
     const normalizedProjectTitle = draftProjectTitle.trim();
+    const normalizedDescription = draftProjectDescription.trim();
     if (!normalizedProjectTitle) {
       setMessage(locale === "zh-CN" ? "请输入项目标题。" : "Please enter a project title.");
       return;
@@ -215,6 +233,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: normalizedProjectTitle,
+          description: normalizedDescription || undefined,
         }),
       });
 
@@ -234,6 +253,9 @@ export default function Home() {
         return;
       }
 
+      setDraftProjectTitle("");
+      setDraftProjectDescription("");
+      setIsCreateCardOpen(false);
       router.push(buildProjectDetailPath(createdProjectId));
     } catch (error) {
       setMessage(
@@ -246,6 +268,18 @@ export default function Home() {
     } finally {
       setCreating(false);
     }
+  }
+
+  function openCreateCard() {
+    setIsCreateCardOpen(true);
+    setMessage("");
+  }
+
+  function cancelCreateCard() {
+    setIsCreateCardOpen(false);
+    setDraftProjectTitle("");
+    setDraftProjectDescription("");
+    setMessage("");
   }
 
   return (
@@ -291,38 +325,18 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mt-6 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
-            <label className="space-y-1">
-              <span className="text-sm font-semibold text-slate-700">{dict.createLabel}</span>
-              <input
-                value={draftProjectTitle}
-                onChange={(event) => setDraftProjectTitle(event.target.value)}
-                placeholder={dict.createPlaceholder}
-                className="h-11 w-full rounded-2xl border border-slate-300/90 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-200"
-              />
-            </label>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => void refreshProjects()}
-                disabled={loading}
-                className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                {loading ? dict.refreshing : dict.refresh}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleCreateProject()}
-                disabled={creating || !draftProjectTitle.trim()}
-                className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl bg-teal-700 px-4 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                {creating ? "..." : dict.createButton}
-              </button>
-            </div>
+          <div className="mt-6 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void refreshProjects()}
+              disabled={loading}
+              className="inline-flex h-11 cursor-pointer items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {loading ? dict.refreshing : dict.refresh}
+            </button>
           </div>
 
-          <p className="mt-2 text-xs text-slate-500">{message}</p>
+          {message ? <p className="mt-2 text-xs text-slate-500">{message}</p> : null}
         </section>
 
         <section className="rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">
@@ -336,58 +350,136 @@ export default function Home() {
             </span>
           </div>
 
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {isCreateCardOpen ? (
+              <article className="rounded-2xl border border-teal-300 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{dict.createCardTitle}</p>
+                    <p className="mt-1 text-xs text-slate-500">{dict.createCardHint}</p>
+                  </div>
+                  <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-teal-700">
+                    {locale === "zh-CN" ? "新增" : "NEW"}
+                  </span>
+                </div>
+
+                <form
+                  className="mt-3 space-y-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleCreateProject();
+                  }}
+                >
+                  <label className="block space-y-1">
+                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                      {dict.createLabel}
+                    </span>
+                    <input
+                      autoFocus
+                      value={draftProjectTitle}
+                      onChange={(event) => setDraftProjectTitle(event.target.value)}
+                      placeholder={dict.createPlaceholder}
+                      className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-200"
+                    />
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                      {dict.createDescriptionLabel}
+                    </span>
+                    <textarea
+                      value={draftProjectDescription}
+                      onChange={(event) => setDraftProjectDescription(event.target.value)}
+                      placeholder={dict.createDescriptionPlaceholder}
+                      rows={3}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-teal-700 focus:ring-2 focus:ring-teal-200"
+                    />
+                  </label>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={cancelCreateCard}
+                      disabled={creating}
+                      className="inline-flex h-10 cursor-pointer items-center justify-center rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      {dict.cancelCreate}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={creating || !draftProjectTitle.trim()}
+                      className="inline-flex h-10 flex-1 cursor-pointer items-center justify-center rounded-xl bg-teal-700 px-3 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      {creating ? "..." : dict.createButton}
+                    </button>
+                  </div>
+                </form>
+              </article>
+            ) : (
+              <button
+                type="button"
+                onClick={openCreateCard}
+                className="group flex min-h-[230px] cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-teal-400/80 bg-teal-50/70 p-4 text-center transition hover:border-teal-600 hover:bg-teal-100"
+              >
+                <span className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-teal-500 text-3xl leading-none text-teal-700 transition group-hover:bg-teal-700 group-hover:text-white">
+                  +
+                </span>
+                <p className="text-sm font-semibold text-slate-900">{dict.createCardTitle}</p>
+                <p className="text-xs leading-6 text-slate-600">{dict.createCardHint}</p>
+              </button>
+            )}
+
+            {sortedProjects.map((project) => (
+              <article
+                key={project.id}
+                className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-md"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{project.name || project.id}</p>
+                    <p className="mt-1 text-xs text-slate-500">{project.id}</p>
+                  </div>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">
+                    {dict.updated}
+                  </span>
+                </div>
+
+                <p className="mt-2 text-xs text-slate-500">{new Date(project.updatedAt).toLocaleString(locale)}</p>
+
+                <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                  <div className="rounded-xl bg-slate-100 px-2 py-2">
+                    <p className="text-[11px] text-slate-500">{dict.assets}</p>
+                    <p className="text-sm font-semibold text-slate-900">{project.counts.assets}</p>
+                  </div>
+                  <div className="rounded-xl bg-slate-100 px-2 py-2">
+                    <p className="text-[11px] text-slate-500">{dict.scripts}</p>
+                    <p className="text-sm font-semibold text-slate-900">{project.counts.scripts}</p>
+                  </div>
+                  <div className="rounded-xl bg-slate-100 px-2 py-2">
+                    <p className="text-[11px] text-slate-500">{dict.jobs}</p>
+                    <p className="text-sm font-semibold text-slate-900">{project.counts.renderJobs}</p>
+                  </div>
+                  <div className="rounded-xl bg-slate-100 px-2 py-2">
+                    <p className="text-[11px] text-slate-500">{dict.videos}</p>
+                    <p className="text-sm font-semibold text-slate-900">{project.counts.videos}</p>
+                  </div>
+                </div>
+
+                <Link
+                  href={buildProjectDetailPath(project.id)}
+                  className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-xl bg-slate-900 px-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+                >
+                  {dict.open}
+                </Link>
+              </article>
+            ))}
+          </div>
+
           {sortedProjects.length === 0 ? (
-            <p className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-5 text-sm text-slate-600">
+            <p className="mt-3 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-5 text-sm text-slate-600">
               {dict.empty}
             </p>
-          ) : (
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {sortedProjects.map((project) => (
-                <article
-                  key={project.id}
-                  className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-md"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">{project.name || project.id}</p>
-                      <p className="mt-1 text-xs text-slate-500">{project.id}</p>
-                    </div>
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600">
-                      {dict.updated}
-                    </span>
-                  </div>
-
-                  <p className="mt-2 text-xs text-slate-500">{new Date(project.updatedAt).toLocaleString(locale)}</p>
-
-                  <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-                    <div className="rounded-xl bg-slate-100 px-2 py-2">
-                      <p className="text-[11px] text-slate-500">{dict.assets}</p>
-                      <p className="text-sm font-semibold text-slate-900">{project.counts.assets}</p>
-                    </div>
-                    <div className="rounded-xl bg-slate-100 px-2 py-2">
-                      <p className="text-[11px] text-slate-500">{dict.scripts}</p>
-                      <p className="text-sm font-semibold text-slate-900">{project.counts.scripts}</p>
-                    </div>
-                    <div className="rounded-xl bg-slate-100 px-2 py-2">
-                      <p className="text-[11px] text-slate-500">{dict.jobs}</p>
-                      <p className="text-sm font-semibold text-slate-900">{project.counts.renderJobs}</p>
-                    </div>
-                    <div className="rounded-xl bg-slate-100 px-2 py-2">
-                      <p className="text-[11px] text-slate-500">{dict.videos}</p>
-                      <p className="text-sm font-semibold text-slate-900">{project.counts.videos}</p>
-                    </div>
-                  </div>
-
-                  <Link
-                    href={buildProjectDetailPath(project.id)}
-                    className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-xl bg-slate-900 px-3 text-sm font-semibold text-white transition hover:bg-teal-700"
-                  >
-                    {dict.open}
-                  </Link>
-                </article>
-              ))}
-            </div>
-          )}
+          ) : null}
 
           <div className="mt-4">
             <Link
