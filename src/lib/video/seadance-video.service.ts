@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertSafeFetchUrl } from "../security/url-guard";
 
 const videoCreateResponseSchema = z.object({
   id: z.string().min(1),
@@ -113,7 +114,11 @@ async function toDataImageUrl(url: string): Promise<string> {
   }
 
   try {
-    const response = await fetch(url);
+    const safeUrl = assertSafeFetchUrl({
+      rawUrl: url,
+      allowDataUrl: false,
+    });
+    const response = await fetch(safeUrl.toString());
     if (!response.ok) {
       return url;
     }

@@ -49,6 +49,7 @@ export type RenderJobRepository = {
     projectId: string;
     externalJobId: string;
     videoUrl: string;
+    provider?: string;
     width?: number;
     height?: number;
     durationSeconds?: number;

@@ -7,6 +7,7 @@ import {
   createPrismaScriptGenerationRepository,
   createScriptGenerationService,
 } from "../../../../../lib/ai/script-generation.service";
+import { scriptSceneTemplateSchema } from "../../../../../lib/ai/script-scene-template";
 import { prisma } from "../../../../../lib/db/prisma";
 import { isDeletedProjectError } from "../../../../../lib/projects/workflow-project";
 import { REFERENCE_ASSET_SELECTION_LIMIT } from "../../../../../lib/reference-assets.constants";
@@ -38,6 +39,7 @@ const requestSchema = z
       )
       .max(REFERENCE_ASSET_SELECTION_LIMIT)
       .optional(),
+    sceneTemplate: scriptSceneTemplateSchema.optional(),
     modelProvider: runtimeTextModelSchema.optional(),
   });
 
@@ -120,6 +122,7 @@ export async function POST(request: Request) {
       durationSec: body.durationSec,
       contentLanguage: body.contentLanguage,
       referenceAssets: body.referenceAssets ?? [],
+      sceneTemplate: body.sceneTemplate,
     });
 
     return NextResponse.json(generated, { status: 201 });

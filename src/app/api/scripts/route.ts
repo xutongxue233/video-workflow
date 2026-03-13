@@ -3,20 +3,12 @@ import { ZodError } from "zod";
 
 import { createPrismaScriptRepository, createScriptService } from "../../../lib/scripts/script.service";
 import { prisma } from "../../../lib/db/prisma";
+import { parseLimit } from "../../../lib/http/query";
 import { isDeletedProjectError } from "../../../lib/projects/workflow-project";
 
 const scriptService = createScriptService({
   repository: createPrismaScriptRepository(prisma),
 });
-
-function parseLimit(raw: string | null, fallback = 40): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(1, Math.min(200, Math.floor(parsed)));
-}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

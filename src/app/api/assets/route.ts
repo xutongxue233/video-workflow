@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createAssetService, createPrismaAssetRepository } from "../../../lib/assets/asset.service";
 import { prisma } from "../../../lib/db/prisma";
+import { parseLimit } from "../../../lib/http/query";
 import { isDeletedProjectError } from "../../../lib/projects/workflow-project";
 import { createLocalStorage } from "../../../lib/storage/local-storage";
 
@@ -19,15 +20,6 @@ function normalizeAssetUrl(url: string): string {
     return `/api/files/${url.slice("/files/".length)}`;
   }
   return url;
-}
-
-function parseLimit(raw: string | null, fallback = 60): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(1, Math.min(200, Math.floor(parsed)));
 }
 
 export async function GET(request: Request) {

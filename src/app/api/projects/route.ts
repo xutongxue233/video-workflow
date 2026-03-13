@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
 import { prisma } from "@/lib/db/prisma";
+import { parseLimit } from "../../../lib/http/query";
 import {
   WORKFLOW_DEFAULT_TEAM_ID,
   ensureWorkflowProjectExists,
@@ -29,19 +30,10 @@ const deleteProjectSchema = z.object({
   projectId: z.string().trim().min(1),
 });
 
-function parseLimit(raw: string | null, fallback = 30): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(1, Math.min(100, Math.floor(parsed)));
-}
-
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const projectId = url.searchParams.get("projectId")?.trim();
-  const limit = parseLimit(url.searchParams.get("limit"), 30);
+  const limit = parseLimit(url.searchParams.get("limit"), 30, { max: 100 });
 
   const projects = await prisma.project.findMany({
     where: {

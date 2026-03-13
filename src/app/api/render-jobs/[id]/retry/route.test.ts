@@ -3,9 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { renderJobFindFirst } = vi.hoisted(() => ({
   renderJobFindFirst: vi.fn(),
 }));
+const { resolveProjectAssetsByIds } = vi.hoisted(() => ({
+  resolveProjectAssetsByIds: vi.fn(),
+}));
 
 vi.mock("../../../../../lib/render/render-job.repository", () => ({
   createPrismaRenderJobRepository: vi.fn(),
+}));
+vi.mock("../../../../../lib/assets/reference-asset.service", () => ({
+  resolveProjectAssetsByIds,
+  toAbsoluteAssetUrl: vi.fn((url: string) => `http://localhost${url}`),
 }));
 
 vi.mock("../../../../../lib/queue/render-queue", () => ({
@@ -31,10 +38,12 @@ async function loadRoute() {
 describe("/api/render-jobs/[id]/retry route", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    resolveProjectAssetsByIds.mockReset();
   });
 
   it("returns 404 when render job is missing", async () => {
     renderJobFindFirst.mockResolvedValue({ id: "missing" });
+    resolveProjectAssetsByIds.mockResolvedValue([]);
 
     vi.mocked(createPrismaRenderJobRepository).mockReturnValue({
       findById: vi.fn().mockResolvedValue(null),
@@ -62,6 +71,7 @@ describe("/api/render-jobs/[id]/retry route", () => {
   it("returns existing result when video already exists and skips enqueue", async () => {
     const add = vi.fn();
     renderJobFindFirst.mockResolvedValue({ id: "job_done" });
+    resolveProjectAssetsByIds.mockResolvedValue([]);
 
     vi.mocked(createPrismaRenderJobRepository).mockReturnValue({
       findById: vi.fn().mockResolvedValue({
@@ -104,6 +114,15 @@ describe("/api/render-jobs/[id]/retry route", () => {
   it("enqueues retry with queue job id and returns accepted", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     renderJobFindFirst.mockResolvedValue({ id: "job_failed" });
+    resolveProjectAssetsByIds.mockResolvedValue([
+      {
+        id: "asset_1",
+        projectId: "proj_1",
+        fileName: "a.png",
+        storageKey: "assets/a.png",
+        url: "/api/files/assets/a.png",
+      },
+    ]);
 
     vi.spyOn(Date, "now").mockReturnValue(1710000000000);
     const markRunning = vi.fn().mockResolvedValue(undefined);
@@ -141,7 +160,7 @@ describe("/api/render-jobs/[id]/retry route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           durationSec: 30,
-          referenceImageUrls: ["https://assets.example.com/a.png"],
+          referenceAssetIds: ["asset_1"],
         }),
       }),
       { params: Promise.resolve({ id: "job_failed" }) },
@@ -152,12 +171,24 @@ describe("/api/render-jobs/[id]/retry route", () => {
     expect(json.renderJobId).toBe("job_failed");
     expect(json.status).toBe("QUEUED");
     expect(buildRenderQueueJobOptions).toHaveBeenCalledWith("retry:job_failed:1710000000000");
+    expect(resolveProjectAssetsByIds).toHaveBeenCalledWith({
+      prisma: expect.any(Object),
+      projectId: "proj_1",
+      assetIds: ["asset_1"],
+    });
     expect(add).toHaveBeenCalledWith(
       "render",
       expect.objectContaining({
         projectId: "proj_1",
         scriptId: "scr_1",
         templateId: "tpl_1",
+        referenceAssets: [
+          expect.objectContaining({
+            id: "asset_1",
+            projectId: "proj_1",
+            url: "http://localhost/api/files/assets/a.png",
+          }),
+        ],
       }),
       expect.objectContaining({
         jobId: "retry:job_failed:1710000000000",
@@ -170,6 +201,7 @@ describe("/api/render-jobs/[id]/retry route", () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const markRunning = vi.fn().mockResolvedValue(undefined);
     renderJobFindFirst.mockResolvedValue({ id: "job_running_stuck" });
+    resolveProjectAssetsByIds.mockResolvedValue([]);
 
     vi.spyOn(Date, "now").mockReturnValue(1710000000000);
     vi.mocked(createPrismaRenderJobRepository).mockReturnValue({

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
 import { prisma } from "../../../lib/db/prisma";
+import { parseLimit } from "../../../lib/http/query";
 import { ensureWorkflowProjectExists, isDeletedProjectError } from "../../../lib/projects/workflow-project";
 
 const createSchema = z.object({
@@ -9,14 +10,6 @@ const createSchema = z.object({
   name: z.string().min(1).max(80),
   prompt: z.string().min(1).max(2000),
 });
-
-function parseLimit(raw: string | null, fallback = 50): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.max(1, Math.min(200, Math.floor(parsed)));
-}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

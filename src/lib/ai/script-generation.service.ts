@@ -6,6 +6,11 @@ import { prisma as defaultPrisma } from "../db/prisma";
 import { ensureWorkflowProjectExists } from "../projects/workflow-project";
 import { REFERENCE_ASSET_SELECTION_LIMIT } from "../reference-assets.constants";
 import type { OpenAICompatibleChatClient } from "./openai-compatible.client";
+import {
+  DEFAULT_SCRIPT_SCENE_TEMPLATE,
+  getSceneTemplatePromptContext,
+  scriptSceneTemplateSchema,
+} from "./script-scene-template";
 
 const generationInputSchema = z.object({
   projectId: z.string().min(1),
@@ -26,6 +31,7 @@ const generationInputSchema = z.object({
     )
     .max(REFERENCE_ASSET_SELECTION_LIMIT)
     .default([]),
+  sceneTemplate: scriptSceneTemplateSchema.default(DEFAULT_SCRIPT_SCENE_TEMPLATE),
 });
 
 const generatedScriptSchema = z.object({
@@ -61,13 +67,12 @@ type ScriptGenerationRepository = {
   }): Promise<{ id: string }>;
 };
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(sceneTemplate: z.infer<typeof scriptSceneTemplateSchema>): string {
+  const context = getSceneTemplatePromptContext(sceneTemplate);
   return [
-    "You are a short-video copywriter and storyboard planner for offline storefront marketing.",
-    "Primary style: panoramic dynamic storefront showcase (门头全景动态展示).",
-    "Focus on core customer value, trust signal, and walk-in conversion.",
-    "For zh-CN outputs, include the exact phrase \"不用发传单也客流不断\" at least once in hook, voiceover, caption, or cta.",
-    "For en-US outputs, include an equivalent claim such as \"Steady walk-in traffic without handing out flyers.\"",
+    "You are a short-video copywriter and storyboard planner.",
+    `Scene template: ${context.title}.`,
+    ...context.instructions,
     "Use only realistic, business-safe claims. Do not fabricate impossible data, awards, or guarantees.",
     "Return strictly valid JSON only.",
     "All user-facing text fields must be in the requested language.",
@@ -79,22 +84,35 @@ function buildSystemPrompt(): string {
 }
 
 function buildUserPrompt(input: z.infer<typeof generationInputSchema>): string {
+  const context = getSceneTemplatePromptContext(input.sceneTemplate);
+
   return JSON.stringify(
     {
-      task: "Generate storefront panorama short-video script and storyboard",
+      task: context.userTaskLabel,
       productName: input.productName,
       sellingPoints: input.sellingPoints,
       targetAudience: input.targetAudience,
       tone: input.tone,
       durationSec: input.durationSec,
       language: input.contentLanguage,
-      campaignCoreValue: "通过门头展示强化信任感与自然到店转化",
-      requiredSellingClaim: "不用发传单也客流不断",
-      shotDirection: [
-        "起镜以门头全景动态展示建立第一眼吸引力",
-        "中段突出核心价值与人流感知",
-        "结尾给出到店行动引导",
-      ],
+      sceneTemplate: input.sceneTemplate,
+      campaignCoreValue:
+        input.sceneTemplate === "storefront"
+          ? "通过门头展示强化信任感与自然到店转化"
+          : "通过结构化镜头叙事强化价值传达与转化",
+      requiredSellingClaim: input.sceneTemplate === "storefront" ? "不用发传单也客流不断" : undefined,
+      shotDirection:
+        input.sceneTemplate === "storefront"
+          ? [
+              "起镜以门头全景动态展示建立第一眼吸引力",
+              "中段突出核心价值与人流感知",
+              "结尾给出到店行动引导",
+            ]
+          : [
+              "第一段明确受众痛点或关注点",
+              "中段展示核心卖点与可信证据",
+              "结尾给出具体行动引导",
+            ],
       referenceAssets: input.referenceAssets.map((asset) => ({
         id: asset.id,
         projectId: asset.projectId,
@@ -128,7 +146,7 @@ export function createScriptGenerationService(deps: {
 
       const rawCompletion = await deps.completionClient.createJsonCompletion({
         model: deps.model,
-        systemPrompt: buildSystemPrompt(),
+        systemPrompt: buildSystemPrompt(payload.sceneTemplate),
         userPrompt: buildUserPrompt(payload),
       });
 

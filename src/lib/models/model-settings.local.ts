@@ -8,6 +8,8 @@ import {
 } from "./model-provider.types";
 
 export const MODEL_SETTINGS_STORAGE_KEY = "video-workflow-model-providers-v1";
+export const MODEL_SETTINGS_SESSION_STORAGE_KEY = "video-workflow-model-providers-session-v1";
+export const MODEL_LIST_CACHE_SESSION_STORAGE_KEY = "video-workflow-model-list-cache-session-v1";
 
 const storedModelProviderSchema = z
   .object({
@@ -49,6 +51,13 @@ export type RuntimeImageModelConfig = {
   modelId: string;
 };
 
+export type StoredListedModel = {
+  id: string;
+  label: string;
+};
+
+export type StoredModelListCache = Record<string, StoredListedModel[]>;
+
 export function parseStoredModelProviders(raw: unknown): StoredModelProvider[] {
   const array = Array.isArray(raw) ? raw : [];
 
@@ -63,7 +72,9 @@ export function loadStoredModelProvidersFromLocalStorage(): StoredModelProvider[
     return [];
   }
 
-  const raw = window.localStorage.getItem(MODEL_SETTINGS_STORAGE_KEY);
+  const raw =
+    window.sessionStorage.getItem(MODEL_SETTINGS_SESSION_STORAGE_KEY)
+    ?? window.localStorage.getItem(MODEL_SETTINGS_STORAGE_KEY);
   if (!raw) {
     return [];
   }
@@ -85,7 +96,84 @@ export function saveStoredModelProvidersToLocalStorage(input: StoredModelProvide
   }
 
   const validated = parseStoredModelProviders(input);
-  window.localStorage.setItem(MODEL_SETTINGS_STORAGE_KEY, JSON.stringify(validated));
+  window.sessionStorage.setItem(MODEL_SETTINGS_SESSION_STORAGE_KEY, JSON.stringify(validated));
+  window.localStorage.removeItem(MODEL_SETTINGS_STORAGE_KEY);
+}
+
+export function clearStoredModelProvidersFromBrowserStorage(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.removeItem(MODEL_SETTINGS_SESSION_STORAGE_KEY);
+  window.localStorage.removeItem(MODEL_SETTINGS_STORAGE_KEY);
+  window.sessionStorage.removeItem(MODEL_LIST_CACHE_SESSION_STORAGE_KEY);
+}
+
+export function parseStoredModelListCache(raw: unknown): StoredModelListCache {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+
+  const record = raw as Record<string, unknown>;
+  const output: StoredModelListCache = {};
+  for (const [providerId, value] of Object.entries(record)) {
+    if (!providerId.trim() || !Array.isArray(value)) {
+      continue;
+    }
+
+    const parsed = value
+      .map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return null;
+        }
+        const model = item as Record<string, unknown>;
+        const id = typeof model.id === "string" ? model.id.trim() : "";
+        const label = typeof model.label === "string" ? model.label.trim() : "";
+        if (!id || !label) {
+          return null;
+        }
+        return { id, label };
+      })
+      .filter((item): item is StoredListedModel => Boolean(item));
+
+    if (parsed.length > 0) {
+      output[providerId] = parsed;
+    }
+  }
+
+  return output;
+}
+
+export function loadStoredModelListCacheFromBrowserStorage(): StoredModelListCache {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  const raw = window.sessionStorage.getItem(MODEL_LIST_CACHE_SESSION_STORAGE_KEY);
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return parseStoredModelListCache(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+export function saveStoredModelListCacheToBrowserStorage(input: StoredModelListCache): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const validated = parseStoredModelListCache(input);
+  if (Object.keys(validated).length === 0) {
+    window.sessionStorage.removeItem(MODEL_LIST_CACHE_SESSION_STORAGE_KEY);
+    return;
+  }
+
+  window.sessionStorage.setItem(MODEL_LIST_CACHE_SESSION_STORAGE_KEY, JSON.stringify(validated));
 }
 
 export function resolveProviderModelId(input: {

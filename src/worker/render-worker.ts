@@ -456,6 +456,7 @@ export function createRenderJobProcessor(deps: {
           jobId,
           projectId: input.data.projectId,
           externalJobId: generated.externalJobId,
+          provider: input.data.provider,
           videoUrl: generated.videoUrl,
         });
 
@@ -625,6 +626,7 @@ export function createRenderJobProcessor(deps: {
         jobId,
         projectId: input.data.projectId,
         externalJobId,
+        provider: input.data.provider,
         videoUrl: merged.url,
       });
       await deps.repository.setExternalJob(jobId, {

@@ -102,12 +102,15 @@ npm run worker
 
 ## Main API Routes
 
-- `POST /api/images/generate`: prototype image + references -> generated material assets
+- `GET /api/workspace/[projectId]/overview`: aggregated workspace payload (project, assets, scripts, render jobs, templates)
+- `POST /api/images/generate`: `prototypeAssetId + referenceAssetIds` -> generated material assets
 - `GET/POST/DELETE /api/prompt-templates`: prompt template management
 - `POST /api/ai/scripts/generate`: script generation
-- `POST /api/videos/generate`: queue video generation
-- `GET /api/render-jobs/[id]`: render status
-- `POST /api/render-jobs/[id]/retry`: retry unfinished shots
+- `POST /api/ai/scripts/autofill`: `referenceAssetIds` -> autofill script inputs
+- `POST /api/videos/generate`: queue video generation (`referenceAssetIds` / frame asset ids)
+- `GET /api/render-jobs/[id]`: read-only render status
+- `POST /api/render-jobs/[id]/reconcile`: explicit reconciliation for timed-out / stuck jobs
+- `POST /api/render-jobs/[id]/retry`: retry unfinished shots (`referenceAssetIds`)
 
 ## Model Selection Rules
 

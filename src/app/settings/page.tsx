@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  clearStoredModelProvidersFromBrowserStorage,
   createDefaultStoredModelProvider,
+  loadStoredModelListCacheFromBrowserStorage,
   loadStoredModelProvidersFromLocalStorage,
+  parseStoredModelListCache,
+  parseStoredModelProviders,
+  saveStoredModelListCacheToBrowserStorage,
   saveStoredModelProvidersToLocalStorage,
+  type StoredListedModel,
   type StoredModelProvider,
 } from "../../lib/models/model-settings.local";
 import {
@@ -16,10 +22,7 @@ import {
   type ModelProtocol,
 } from "../../lib/models/model-provider.types";
 
-type ListedModel = {
-  id: string;
-  label: string;
-};
+type ListedModel = StoredListedModel;
 
 const SEEDANCE_MODEL_PATTERN = /seedance|seadance/i;
 const SEEDREAM_MODEL_PATTERN = /seedream|seededit/i;
@@ -87,9 +90,14 @@ export default function ModelSettingsPage() {
   const [providers, setProviders] = useState<StoredModelProvider[]>(() =>
     loadStoredModelProvidersFromLocalStorage(),
   );
-  const [modelsByProvider, setModelsByProvider] = useState<Record<string, ListedModel[]>>({});
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, ListedModel[]>>(() =>
+    loadStoredModelListCacheFromBrowserStorage(),
+  );
   const [loadingByProvider, setLoadingByProvider] = useState<Record<string, boolean>>({});
   const [messageByProvider, setMessageByProvider] = useState<Record<string, string>>({});
+  const [globalMessage, setGlobalMessage] = useState("");
+  const [dbLoaded, setDbLoaded] = useState(false);
+  const lastDbSyncedPayloadRef = useRef("");
 
   const enabledCount = useMemo(() => providers.filter((item) => item.enabled).length, [providers]);
   const textEnabledCount = useMemo(
@@ -105,9 +113,118 @@ export default function ModelSettingsPage() {
     [providers],
   );
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateFromDb = async () => {
+      try {
+        const response = await fetch("/api/model-settings", {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const raw = (await response.json()) as {
+          providers?: unknown;
+          modelsByProvider?: unknown;
+          source?: string;
+        };
+        const providersFromDb = parseStoredModelProviders(raw.providers);
+        const modelCacheFromDb = parseStoredModelListCache(raw.modelsByProvider);
+        const payload = JSON.stringify({
+          providers: providersFromDb,
+          modelsByProvider: modelCacheFromDb,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        setProviders(providersFromDb);
+        setModelsByProvider(modelCacheFromDb);
+        saveStoredModelProvidersToLocalStorage(providersFromDb);
+        saveStoredModelListCacheToBrowserStorage(modelCacheFromDb);
+        lastDbSyncedPayloadRef.current = payload;
+
+        if (raw.source === "database") {
+          setGlobalMessage("已从数据库恢复模型配置。");
+        }
+      } catch {
+        if (!cancelled) {
+          setGlobalMessage("数据库配置读取失败，已使用本地会话配置。");
+        }
+      } finally {
+        if (!cancelled) {
+          setDbLoaded(true);
+        }
+      }
+    };
+
+    void hydrateFromDb();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!dbLoaded) {
+      return;
+    }
+
+    const payload = JSON.stringify({
+      providers,
+      modelsByProvider,
+    });
+    if (payload === lastDbSyncedPayloadRef.current) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch("/api/model-settings", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: payload,
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          lastDbSyncedPayloadRef.current = payload;
+        } catch {
+          setGlobalMessage("数据库同步失败，当前配置仍保存在本地会话中。");
+        }
+      })();
+    }, 420);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [dbLoaded, providers, modelsByProvider]);
+
   function persist(nextProviders: StoredModelProvider[]) {
     setProviders(nextProviders);
     saveStoredModelProvidersToLocalStorage(nextProviders);
+  }
+
+  function persistModelCache(nextCache: Record<string, ListedModel[]>) {
+    setModelsByProvider(nextCache);
+    saveStoredModelListCacheToBrowserStorage(nextCache);
+  }
+
+  function updateModelCache(
+    updater: (prev: Record<string, ListedModel[]>) => Record<string, ListedModel[]>,
+  ) {
+    setModelsByProvider((prev) => {
+      const next = updater(prev);
+      saveStoredModelListCacheToBrowserStorage(next);
+      return next;
+    });
   }
 
   function updateProvider(providerId: string, updater: (item: StoredModelProvider) => StoredModelProvider) {
@@ -128,7 +245,7 @@ export default function ModelSettingsPage() {
     const next = providers.filter((item) => item.id !== providerId);
     persist(next);
 
-    setModelsByProvider((prev) => {
+    updateModelCache((prev) => {
       const rest = { ...prev };
       delete rest[providerId];
       return rest;
@@ -143,6 +260,15 @@ export default function ModelSettingsPage() {
       delete rest[providerId];
       return rest;
     });
+  }
+
+  function clearCredentials() {
+    clearStoredModelProvidersFromBrowserStorage();
+    setProviders([]);
+    persistModelCache({});
+    setLoadingByProvider({});
+    setMessageByProvider({});
+    setGlobalMessage("已清空浏览器会话中的模型配置和 API Key。");
   }
 
   async function fetchModels(provider: StoredModelProvider) {
@@ -175,7 +301,7 @@ export default function ModelSettingsPage() {
           ? getBuiltinSeedreamModels()
           : models;
 
-      setModelsByProvider((prev) => ({ ...prev, [provider.id]: effectiveModels }));
+      updateModelCache((prev) => ({ ...prev, [provider.id]: effectiveModels }));
       setMessageByProvider((prev) => ({
         ...prev,
         [provider.id]:
@@ -193,7 +319,7 @@ export default function ModelSettingsPage() {
     } catch (error) {
       if (provider.capability === "image") {
         const builtin = getBuiltinSeedreamModels();
-        setModelsByProvider((prev) => ({ ...prev, [provider.id]: builtin }));
+        updateModelCache((prev) => ({ ...prev, [provider.id]: builtin }));
         setMessageByProvider((prev) => ({
           ...prev,
           [provider.id]: "模型列表接口不可用，已切换为内置 Seedream 模型列表。",
@@ -230,7 +356,7 @@ export default function ModelSettingsPage() {
               <h1 className="mt-2 text-3xl font-semibold text-slate-900 md:text-5xl">模型供应商配置中心</h1>
               <p className="mt-3 text-sm leading-7 text-slate-600 md:text-base">
                 支持为文本、图像、视频分别配置多个供应商。默认通过 <code>/model/list</code> 拉取模型；失败时可手动填写
-                <code> model_id</code>。API Key 仅存储在浏览器本地（localStorage）。
+                <code> model_id</code>。API Key 与已拉取模型列表仅保存在当前浏览器会话（sessionStorage），刷新会保留，关闭会话后失效。
               </p>
             </div>
 
@@ -248,8 +374,21 @@ export default function ModelSettingsPage() {
               >
                 新增供应商
               </button>
+              <button
+                type="button"
+                onClick={clearCredentials}
+                className="inline-flex h-10 items-center justify-center rounded-xl border border-rose-300 bg-rose-50 px-4 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
+              >
+                清空会话凭证
+              </button>
             </div>
           </div>
+
+          {globalMessage ? (
+            <p className="mt-4 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-600" role="status" aria-live="polite">
+              {globalMessage}
+            </p>
+          ) : null}
 
           <div className="mt-6 grid gap-3 sm:grid-cols-4">
             <article className="rounded-2xl border border-slate-200 bg-white/90 p-4">
@@ -467,7 +606,7 @@ export default function ModelSettingsPage() {
                   </label>
                 </div>
 
-                {message ? <p className="mt-3 text-xs text-slate-600">{message}</p> : null}
+                {message ? <p className="mt-3 text-xs text-slate-600" role="status" aria-live="polite">{message}</p> : null}
               </article>
             );
           })}

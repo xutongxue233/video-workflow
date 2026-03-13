@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
+import {
+  resolveProjectAssetsByIds,
+  toAssetImageDataUrl,
+} from "../../../../lib/assets/reference-asset.service";
 import { createAssetService, createPrismaAssetRepository } from "../../../../lib/assets/asset.service";
 import { prisma } from "../../../../lib/db/prisma";
 import { createOpenAICompatibleSeedreamClient } from "../../../../lib/image/seedream-image.service";
@@ -19,8 +23,8 @@ const requestSchema = z
     projectId: z.string().min(1),
     prompt: z.string().min(1).max(2000),
     outputCount: outputSchema.default(4),
-    prototypeImageUrl: z.string().min(1),
-    referenceImageUrls: z.array(z.string().min(1)).max(13).default([]),
+    prototypeAssetId: z.string().min(1),
+    referenceAssetIds: z.array(z.string().min(1)).max(13).default([]),
     size: z.string().max(32).optional(),
     selectedImageModel: z
       .object({
@@ -32,11 +36,11 @@ const requestSchema = z
       .optional(),
   })
   .superRefine((input, ctx) => {
-    const inputImageCount = 1 + input.referenceImageUrls.length;
+    const inputImageCount = 1 + input.referenceAssetIds.length;
     if (inputImageCount > 14) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["referenceImageUrls"],
+        path: ["referenceAssetIds"],
         message: "input images must be <= 14 (prototype + references)",
       });
     }
@@ -58,29 +62,6 @@ const assetService = createAssetService({
   storage: assetStorage,
   repository: createPrismaAssetRepository(prisma),
 });
-
-function isDataImageUrl(value: string): boolean {
-  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(value);
-}
-
-async function toDataImageUrl(url: string): Promise<string> {
-  if (isDataImageUrl(url)) {
-    return url;
-  }
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`failed to read image: ${response.status} ${url}`);
-  }
-
-  const contentType = response.headers.get("content-type")?.toLowerCase() || "";
-  if (!contentType.startsWith("image/")) {
-    throw new Error(`image content-type expected: ${url}`);
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
-  return `data:${contentType};base64,${buffer.toString("base64")}`;
-}
 
 function toFileExtFromMime(mimeType: string): string {
   if (/png/i.test(mimeType)) {
@@ -128,9 +109,31 @@ export async function POST(request: Request) {
       );
     }
 
+    const targetAssetIds = [body.prototypeAssetId, ...body.referenceAssetIds];
+    const resolvedAssets = await resolveProjectAssetsByIds({
+      prisma,
+      projectId: body.projectId,
+      assetIds: targetAssetIds,
+    });
+    const byId = new Map(resolvedAssets.map((item) => [item.id, item]));
+    const prototypeAsset = byId.get(body.prototypeAssetId);
+    if (!prototypeAsset) {
+      throw new Error(`prototype asset not found in project: ${body.prototypeAssetId}`);
+    }
+
+    const rootDir = process.env.LOCAL_STORAGE_ROOT ?? "storage";
     const imageDataUrls = await Promise.all([
-      toDataImageUrl(body.prototypeImageUrl),
-      ...body.referenceImageUrls.map((url) => toDataImageUrl(url)),
+      toAssetImageDataUrl({ rootDir, asset: prototypeAsset }),
+      ...body.referenceAssetIds.map((assetId) => {
+        const asset = byId.get(assetId);
+        if (!asset) {
+          throw new Error(`reference asset not found in project: ${assetId}`);
+        }
+        return toAssetImageDataUrl({
+          rootDir,
+          asset,
+        });
+      }),
     ]);
 
     const client = createOpenAICompatibleSeedreamClient({

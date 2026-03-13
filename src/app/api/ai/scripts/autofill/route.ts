@@ -1,5 +1,15 @@
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
+import { prisma } from "../../../../../lib/db/prisma";
+import {
+  resolveProjectAssetsByIds,
+  toAssetImageDataUrl,
+} from "../../../../../lib/assets/reference-asset.service";
+import {
+  DEFAULT_SCRIPT_SCENE_TEMPLATE,
+  getSceneTemplatePromptContext,
+  scriptSceneTemplateSchema,
+} from "../../../../../lib/ai/script-scene-template";
 import { REFERENCE_ASSET_SELECTION_LIMIT } from "../../../../../lib/reference-assets.constants";
 
 const runtimeTextModelSchema = z.object({
@@ -12,14 +22,8 @@ const runtimeTextModelSchema = z.object({
 const requestSchema = z.object({
   projectId: z.string().min(1),
   contentLanguage: z.enum(["zh-CN", "en-US"]).optional(),
-  referenceAssets: z.array(
-    z.object({
-      id: z.string().min(1),
-      projectId: z.string().min(1),
-      fileName: z.string().min(1),
-      url: z.string().min(1),
-    }),
-  ).min(1).max(REFERENCE_ASSET_SELECTION_LIMIT),
+  referenceAssetIds: z.array(z.string().min(1)).min(1).max(REFERENCE_ASSET_SELECTION_LIMIT),
+  sceneTemplate: scriptSceneTemplateSchema.default(DEFAULT_SCRIPT_SCENE_TEMPLATE),
   modelProvider: runtimeTextModelSchema.optional(),
 });
 
@@ -113,15 +117,21 @@ function buildSystemPrompt() {
 }
 
 function buildUserPrompt(input: z.infer<typeof requestSchema>) {
+  const context = getSceneTemplatePromptContext(input.sceneTemplate);
+
   return JSON.stringify(
     {
       task: "Autofill short-video generation fields from uploaded assets",
+      sceneTemplate: input.sceneTemplate,
+      sceneTemplateLabel: context.title,
       language: input.contentLanguage ?? "zh-CN",
       projectId: input.projectId,
-      imageCount: input.referenceAssets.length,
+      imageCount: input.referenceAssetIds.length,
       businessContext:
-        "Local storefront marketing focused on panoramic facade display and natural walk-in conversion",
-      requiredSellingClaim: "不用发传单也客流不断",
+        input.sceneTemplate === "storefront"
+          ? "Local storefront marketing focused on panoramic facade display and natural walk-in conversion"
+          : "Short-video concept extraction from product-focused visual references",
+      requiredSellingClaim: input.sceneTemplate === "storefront" ? "不用发传单也客流不断" : undefined,
       outputRules: [
         "Use only what is visually verifiable from images",
         "Do not infer brand/model from filename",
@@ -134,37 +144,18 @@ function buildUserPrompt(input: z.infer<typeof requestSchema>) {
   );
 }
 
-function isDataImageUrl(value: string): boolean {
-  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(value);
-}
+async function buildDataImageUrls(input: {
+  projectId: string;
+  referenceAssetIds: string[];
+}) {
+  const assets = await resolveProjectAssetsByIds({
+    prisma,
+    projectId: input.projectId,
+    assetIds: input.referenceAssetIds,
+  });
 
-async function toDataImageUrl(url: string): Promise<string | null> {
-  if (isDataImageUrl(url)) {
-    return url;
-  }
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      return null;
-    }
-
-    const contentTypeHeader = response.headers.get("content-type");
-    const contentType = contentTypeHeader?.split(";")[0]?.trim().toLowerCase() ?? "";
-    if (!contentType.startsWith("image/")) {
-      return null;
-    }
-
-    const bytes = Buffer.from(await response.arrayBuffer());
-    return `data:${contentType};base64,${bytes.toString("base64")}`;
-  } catch {
-    return null;
-  }
-}
-
-async function buildDataImageUrls(referenceAssets: z.infer<typeof requestSchema>["referenceAssets"]) {
-  const values = await Promise.all(referenceAssets.map((asset) => toDataImageUrl(asset.url)));
-  return values.filter((item): item is string => typeof item === "string");
+  const rootDir = process.env.LOCAL_STORAGE_ROOT ?? "storage";
+  return Promise.all(assets.map((asset) => toAssetImageDataUrl({ rootDir, asset })));
 }
 
 function parseDataUrlToGeminiPart(dataUrl: string): { mime_type: string; data: string } | null {
@@ -305,7 +296,10 @@ export async function POST(request: Request) {
     const model = buildRuntimeTextModel({ modelProvider: body.modelProvider });
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt(body);
-    const imageDataUrls = await buildDataImageUrls(body.referenceAssets);
+    const imageDataUrls = await buildDataImageUrls({
+      projectId: body.projectId,
+      referenceAssetIds: body.referenceAssetIds,
+    });
 
     if (imageDataUrls.length === 0) {
       return NextResponse.json(

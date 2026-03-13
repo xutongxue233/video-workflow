@@ -1,25 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const { resolveProjectAssetsByIds, toAssetImageDataUrl } = vi.hoisted(() => ({
+  resolveProjectAssetsByIds: vi.fn(),
+  toAssetImageDataUrl: vi.fn(),
+}));
+
+vi.mock("../../../../../lib/assets/reference-asset.service", () => ({
+  resolveProjectAssetsByIds,
+  toAssetImageDataUrl,
+}));
+
 import { POST } from "./route";
 
 describe("/api/ai/scripts/autofill route", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
-  it("uses multimodal image input and does not rely on fileName text", async () => {
-    const imageBytes = Uint8Array.from([1, 2, 3, 4]);
+  it("uses multimodal image input from reference asset IDs", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        headers: {
-          get: (name: string) => (name.toLowerCase() === "content-type" ? "image/png" : null),
-        },
-        arrayBuffer: async () => imageBytes.buffer,
-      })
-      .mockResolvedValueOnce({
+      .mockResolvedValue({
         ok: true,
         json: async () => ({
           choices: [
@@ -39,6 +42,16 @@ describe("/api/ai/scripts/autofill route", () => {
       });
 
     vi.stubGlobal("fetch", fetchMock);
+    resolveProjectAssetsByIds.mockResolvedValue([
+      {
+        id: "asset_1",
+        projectId: "proj_1",
+        fileName: "dragon-final-v3.png",
+        storageKey: "assets/asset-1.png",
+        url: "/api/files/assets/asset-1.png",
+      },
+    ]);
+    toAssetImageDataUrl.mockResolvedValue("data:image/png;base64,AAAA");
 
     const request = new Request("http://localhost/api/ai/scripts/autofill", {
       method: "POST",
@@ -48,14 +61,7 @@ describe("/api/ai/scripts/autofill route", () => {
       body: JSON.stringify({
         projectId: "proj_1",
         contentLanguage: "zh-CN",
-        referenceAssets: [
-          {
-            id: "asset_1",
-            projectId: "proj_1",
-            fileName: "dragon-final-v3.png",
-            url: "https://assets.example.com/dragon.png",
-          },
-        ],
+        referenceAssetIds: ["asset_1"],
         modelProvider: {
           protocol: "openai",
           baseURL: "https://api.example.com/v1",
@@ -75,7 +81,7 @@ describe("/api/ai/scripts/autofill route", () => {
     expect(json.productName).toBe("Dragon Figurine");
     expect(Array.isArray(json.sellingPoints)).toBe(true);
 
-    const modelRequest = JSON.parse(fetchMock.mock.calls[1][1].body as string) as {
+    const modelRequest = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
       messages: Array<{ role: string; content: string | Array<{ type: string; text?: string }> }>;
     };
     const systemMessage = modelRequest.messages.find((item) => item.role === "system");
@@ -92,15 +98,18 @@ describe("/api/ai/scripts/autofill route", () => {
     expect(typeof systemMessage?.content === "string" ? systemMessage.content : "").toContain(
       "不用发传单也客流不断",
     );
+    expect(resolveProjectAssetsByIds).toHaveBeenCalledWith({
+      prisma: expect.any(Object),
+      projectId: "proj_1",
+      assetIds: ["asset_1"],
+    });
+    expect(toAssetImageDataUrl).toHaveBeenCalledOnce();
   });
 
-  it("returns 422 when no image url can be converted to image content", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      text: async () => "not found",
-    });
+  it("returns 422 when reference asset resolution fails", async () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    resolveProjectAssetsByIds.mockRejectedValue(new Error("reference assets not found in project: asset_1"));
 
     const request = new Request("http://localhost/api/ai/scripts/autofill", {
       method: "POST",
@@ -110,14 +119,7 @@ describe("/api/ai/scripts/autofill route", () => {
       body: JSON.stringify({
         projectId: "proj_1",
         contentLanguage: "zh-CN",
-        referenceAssets: [
-          {
-            id: "asset_1",
-            projectId: "proj_1",
-            fileName: "dragon-final-v3.png",
-            url: "https://assets.example.com/missing.png",
-          },
-        ],
+        referenceAssetIds: ["asset_1"],
         modelProvider: {
           protocol: "openai",
           baseURL: "https://api.example.com/v1",
@@ -131,7 +133,7 @@ describe("/api/ai/scripts/autofill route", () => {
     const json = (await response.json()) as { message?: string };
 
     expect(response.status).toBe(422);
-    expect(json.message).toContain("No accessible image content found");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(json.message).toContain("reference assets not found");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

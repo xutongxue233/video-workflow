@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getSsrSafeInitialModelProviders,
+  parseStoredModelListCache,
   parseStoredModelProviders,
   resolveProviderModelId,
   toRuntimeImageModelConfig,
@@ -113,6 +114,20 @@ describe("model-settings local helpers", () => {
 
   it("returns empty initial providers for SSR-safe first render", () => {
     expect(getSsrSafeInitialModelProviders()).toEqual([]);
+  });
+
+  it("parses model-list cache and drops invalid entries", () => {
+    const parsed = parseStoredModelListCache({
+      provider_1: [
+        { id: "gpt-4.1-mini", label: "gpt-4.1-mini" },
+        { id: "", label: "missing-id" },
+      ],
+      provider_2: "invalid",
+    });
+
+    expect(parsed).toEqual({
+      provider_1: [{ id: "gpt-4.1-mini", label: "gpt-4.1-mini" }],
+    });
   });
 });
 

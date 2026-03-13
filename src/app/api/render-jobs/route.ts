@@ -2,66 +2,13 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
 import { prisma } from "@/lib/db/prisma";
+import { parseLimit } from "../../../lib/http/query";
+import { parseReferenceAssetsJson } from "../../../lib/render/reference-assets";
 import { parseStoryboardProgress } from "@/lib/render/storyboard-progress";
 import { createBullMQRenderQueuePort } from "@/lib/render/render-job.queue";
 import { createPrismaRenderJobRepository } from "@/lib/render/render-job.repository";
 import { createRenderJobService } from "@/lib/render/render-job.service";
 import { isDeletedProjectError } from "../../../lib/projects/workflow-project";
-
-function parseReferenceAssetsJson(raw: string | null) {
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed
-      .map((item) => {
-        if (!item || typeof item !== "object" || Array.isArray(item)) {
-          return null;
-        }
-
-        const candidate = item as Record<string, unknown>;
-        const id = typeof candidate.id === "string" ? candidate.id : "";
-        const projectId = typeof candidate.projectId === "string" ? candidate.projectId : "";
-        const url = typeof candidate.url === "string" ? candidate.url : "";
-        const fileNameRaw = candidate.fileName;
-        const fileName =
-          typeof fileNameRaw === "string"
-            ? fileNameRaw
-            : fileNameRaw == null
-              ? null
-              : String(fileNameRaw);
-
-        if (!id || !projectId || !url) {
-          return null;
-        }
-
-        return {
-          id,
-          projectId,
-          fileName,
-          url,
-        };
-      })
-      .filter((item): item is { id: string; projectId: string; fileName: string | null; url: string } => Boolean(item));
-  } catch {
-    return [];
-  }
-}
-
-function parseLimit(raw: string | null, fallback = 40): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(1, Math.min(200, Math.floor(parsed)));
-}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

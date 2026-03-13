@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
+import {
+  resolveProjectAssetsByIds,
+  toAbsoluteAssetUrl,
+} from "../../../../../lib/assets/reference-asset.service";
 import { prisma } from "../../../../../lib/db/prisma";
 import { buildRenderPayload } from "../../../../../lib/render/render-job";
 import { createPrismaRenderJobRepository } from "../../../../../lib/render/render-job.repository";
@@ -10,17 +14,9 @@ import { REFERENCE_ASSET_SELECTION_LIMIT } from "../../../../../lib/reference-as
 
 const retryBodySchema = z.object({
   durationSec: z.number().int().min(-1).max(60).optional(),
-  firstFrameUrl: z.string().url().optional(),
-  lastFrameUrl: z.string().url().optional(),
-  referenceImageUrls: z.array(z.string().url()).max(REFERENCE_ASSET_SELECTION_LIMIT).optional(),
-  referenceAssets: z.array(
-    z.object({
-      id: z.string().min(1),
-      projectId: z.string().min(1),
-      fileName: z.string().min(1).nullable().optional(),
-      url: z.string().url(),
-    }),
-  ).max(REFERENCE_ASSET_SELECTION_LIMIT).optional(),
+  firstFrameAssetId: z.string().min(1).optional(),
+  lastFrameAssetId: z.string().min(1).optional(),
+  referenceAssetIds: z.array(z.string().min(1)).max(REFERENCE_ASSET_SELECTION_LIMIT).default([]),
   requestNonce: z.string().optional(),
   selectedVideoModel: z
     .object({
@@ -30,26 +26,6 @@ const retryBodySchema = z.object({
       modelId: z.string().min(1),
     })
     .optional(),
-}).superRefine((value, ctx) => {
-  if (value.lastFrameUrl && !value.firstFrameUrl) {
-    ctx.addIssue({
-      path: ["firstFrameUrl"],
-      code: z.ZodIssueCode.custom,
-      message: "firstFrameUrl is required when lastFrameUrl is provided",
-    });
-  }
-
-  if (
-    (Array.isArray(value.referenceImageUrls) && value.referenceImageUrls.length > 0
-      || Array.isArray(value.referenceAssets) && value.referenceAssets.length > 0) &&
-    (typeof value.firstFrameUrl === "string" || typeof value.lastFrameUrl === "string")
-  ) {
-    ctx.addIssue({
-      path: ["referenceImageUrls"],
-      code: z.ZodIssueCode.custom,
-      message: "referenceImageUrls cannot be combined with firstFrameUrl/lastFrameUrl",
-    });
-  }
 });
 
 type RetryBody = z.infer<typeof retryBodySchema>;
@@ -92,7 +68,7 @@ function isMergeStuckStoryboard(job: {
 
 async function parseRetryBody(request: Request): Promise<RetryBody> {
   if (!request.body) {
-    return {};
+    return retryBodySchema.parse({});
   }
 
   try {
@@ -171,6 +147,43 @@ export async function POST(
     }
 
     const queueJobId = toRetryQueueJobId(job.id);
+    const targetAssetIds = [
+      body.firstFrameAssetId,
+      body.lastFrameAssetId,
+      ...body.referenceAssetIds,
+    ].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    const resolvedAssets = await resolveProjectAssetsByIds({
+      prisma,
+      projectId: job.projectId,
+      assetIds: targetAssetIds,
+    });
+    const byId = new Map(resolvedAssets.map((item) => [item.id, item]));
+    const resolveAssetUrl = (assetId: string | undefined) => {
+      if (!assetId) {
+        return undefined;
+      }
+
+      const asset = byId.get(assetId);
+      if (!asset) {
+        throw new Error(`reference asset not found in project: ${assetId}`);
+      }
+
+      return toAbsoluteAssetUrl(asset.url, request.url);
+    };
+    const referenceAssets = body.referenceAssetIds.map((assetId) => {
+      const asset = byId.get(assetId);
+      if (!asset) {
+        throw new Error(`reference asset not found in project: ${assetId}`);
+      }
+
+      return {
+        id: asset.id,
+        projectId: asset.projectId,
+        fileName: asset.fileName,
+        url: toAbsoluteAssetUrl(asset.url, request.url),
+      };
+    });
+
     const payload = buildRenderPayload({
       projectId: job.projectId,
       templateId: job.templateId,
@@ -178,10 +191,9 @@ export async function POST(
       voiceStyle: job.voiceStyle,
       aspectRatio,
       durationSec: body.durationSec,
-      firstFrameUrl: body.firstFrameUrl,
-      lastFrameUrl: body.lastFrameUrl,
-      referenceImageUrls: body.referenceImageUrls,
-      referenceAssets: body.referenceAssets,
+      firstFrameUrl: resolveAssetUrl(body.firstFrameAssetId),
+      lastFrameUrl: resolveAssetUrl(body.lastFrameAssetId),
+      referenceAssets,
       requestNonce: body.requestNonce ?? queueJobId,
       provider: body.selectedVideoModel?.protocol ?? job.provider ?? "seadance",
       selectedVideoModel: body.selectedVideoModel,
@@ -219,6 +231,13 @@ export async function POST(
       return NextResponse.json(
         { message: "invalid retry payload" },
         { status: 400 },
+      );
+    }
+
+    if (error instanceof Error && error.message.includes("reference asset not found in project")) {
+      return NextResponse.json(
+        { message: error.message },
+        { status: 422 },
       );
     }
 

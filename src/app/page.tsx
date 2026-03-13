@@ -146,6 +146,19 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
+function toMessageAriaRole(message: string): "alert" | "status" {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("失败")
+    || normalized.includes("错误")
+    || normalized.includes("failed")
+    || normalized.includes("error")
+  ) {
+    return "alert";
+  }
+  return "status";
+}
+
 export default function Home() {
   const router = useRouter();
   const [locale, setLocale] = useState<Locale>("zh-CN");
@@ -384,7 +397,11 @@ export default function Home() {
             </button>
           </div>
 
-          {message ? <p className="mt-2 text-xs text-slate-500">{message}</p> : null}
+          {message ? (
+            <p className="mt-2 text-xs text-slate-500" role={toMessageAriaRole(message)} aria-live="polite">
+              {message}
+            </p>
+          ) : null}
         </section>
 
         <section className="rounded-3xl border border-white/70 bg-white/84 p-6 shadow-[0_16px_45px_rgba(15,23,42,0.08)]">

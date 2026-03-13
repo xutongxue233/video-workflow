@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import ffmpegStatic from "ffmpeg-static";
+import { assertSafeFetchUrl } from "../security/url-guard";
 
 type MergeInput = {
   outputRoot: string;
@@ -95,7 +96,11 @@ function toFfmpegMissingError(command: string): Error {
 }
 
 async function downloadToFile(url: string, filePath: string): Promise<void> {
-  const response = await fetch(url);
+  const safeUrl = assertSafeFetchUrl({
+    rawUrl: url,
+    allowDataUrl: false,
+  });
+  const response = await fetch(safeUrl.toString());
   if (!response.ok) {
     throw new Error(`failed to download segment: ${response.status} ${url}`);
   }
